@@ -250,11 +250,11 @@ def api_role_can(action, roles=None, allow_self=False):
         def decorated_function(*args, **kwargs):
             try:
                 user_id = int(kwargs.get('user_id'))
-            except:
+            except (TypeError, ValueError):
                 user_id = None
             try:
                 username = kwargs.get('username')
-            except:
+            except (TypeError, ValueError):
                 username = None
             if (
                     (current_user.role.name in roles) or

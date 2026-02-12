@@ -1,10 +1,64 @@
 import os
 import logging
+import secrets
 from flask import Flask
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_mail import Mail
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_session import Session
 from .lib import utils
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[],
+    storage_uri="memory://",
+)
+
+# Known insecure defaults that must never be used in production
+_INSECURE_SECRETS = {
+    'e951e5a1f4b94151b360f47edf596dd2',
+}
+_INSECURE_SALTS = {
+    '$2b$12$yLUMTIfl21FKJQpTkRQXCu',
+}
+
+
+def _ensure_secret_key(app):
+    """Ensure SECRET_KEY is set and not an insecure default."""
+    key = app.config.get('SECRET_KEY')
+    if not key:
+        app.config['SECRET_KEY'] = secrets.token_hex(32)
+        app.logger.warning(
+            'SECRET_KEY not configured -- generated a random key. '
+            'Sessions will not persist across restarts. '
+            'Set SECRET_KEY in your configuration file.'
+        )
+    elif key in _INSECURE_SECRETS:
+        raise RuntimeError(
+            'SECRET_KEY is set to a known insecure default. '
+            'Please set a unique SECRET_KEY in your configuration file or '
+            'via the SECRET_KEY environment variable.'
+        )
+
+
+def _ensure_salt(app):
+    """Ensure SALT is set and not an insecure default."""
+    import bcrypt
+    salt = app.config.get('SALT')
+    if not salt:
+        salt = bcrypt.gensalt().decode('utf-8')
+        app.config['SALT'] = salt
+        app.logger.warning(
+            'SALT not configured -- generated a random salt. '
+            'Set SALT in your configuration file for consistent password hashing.'
+        )
+    elif salt in _INSECURE_SALTS:
+        raise RuntimeError(
+            'SALT is set to a known insecure default. '
+            'Please set a unique SALT in your configuration file or '
+            'via the SALT environment variable.'
+        )
 
 
 def create_app(config=None):
@@ -53,6 +107,10 @@ def create_app(config=None):
     # Load any settings defined with environment variables
     AppSettings.load_environment(app)
 
+    # Ensure SECRET_KEY and SALT are set and secure
+    _ensure_secret_key(app)
+    _ensure_salt(app)
+
     # HSTS
     if app.config.get('HSTS_ENABLED'):
         from flask_sslify import SSLify
@@ -71,6 +129,9 @@ def create_app(config=None):
 
     # SMTP
     app.mail = Mail(app)
+
+    # Rate limiting
+    limiter.init_app(app)
 
     # Load app's components
     assets.init_app(app)

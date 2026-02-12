@@ -15,6 +15,7 @@ from flask_login import login_user, logout_user, login_required, current_user
 from .base import captcha, csrf, login_manager
 from ..lib import utils
 from ..decorators import dyndns_login_required
+from .. import limiter
 from ..models.base import db
 from ..models.user import User, Anonymous
 from ..models.role import Role
@@ -156,6 +157,7 @@ def oidc_login():
 
 
 @index_bp.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10/minute", methods=["POST"])
 def login():
     SAML_ENABLED = current_app.config.get('SAML_ENABLED', False)
 

@@ -598,7 +598,7 @@ class Domain(db.Model):
             current_app.logger.error(
                 'Cannot revoke user privileges on zone {0}. DETAIL: {1}'.
                     format(self.name, e))
-            current_app.logger.debug(print(traceback.format_exc()))
+            current_app.logger.debug(traceback.format_exc())
 
         try:
             for uid in added_ids:
@@ -610,7 +610,7 @@ class Domain(db.Model):
             current_app.logger.error(
                 'Cannot grant user privileges to zone {0}. DETAIL: {1}'.
                     format(self.name, e))
-            current_app.logger.debug(print(traceback.format_exc()))
+            current_app.logger.debug(traceback.format_exc())
 
     def revoke_privileges_by_id(self, user_id):
         """

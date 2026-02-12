@@ -318,7 +318,7 @@ def add():
             # Encode domain name into punycode (IDN)
             try:
                 domain_name = to_idna(domain_name, 'encode')
-            except:
+            except Exception:
                 current_app.logger.error("Cannot encode the zone name {}".format(domain_name))
                 current_app.logger.debug(traceback.format_exc())
                 return render_template(

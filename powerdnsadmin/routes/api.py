@@ -8,6 +8,7 @@ from flask import (Blueprint, g, request, abort, current_app, make_response, jso
 from flask_login import current_user
 
 from .base import csrf
+from .. import limiter
 from ..decorators import (
     api_basic_auth, api_can_create_domain, is_json, apikey_auth,
     apikey_can_create_domain, apikey_can_remove_domain,
@@ -37,6 +38,8 @@ from ..models.base import db
 
 api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
 apilist_bp = Blueprint('apilist', __name__, url_prefix='/')
+
+limiter.limit("300/minute")(api_bp)
 
 apikey_schema = ApiKeySchema(many=True)
 apikey_single_schema = ApiKeySchema()

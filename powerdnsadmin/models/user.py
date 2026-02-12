@@ -124,7 +124,11 @@ class User(db.Model):
         return user_info
 
     def ldap_init_conn(self):
-        ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
+        tls_verify = Setting().get('ldap_tls_verify')
+        if tls_verify:
+            ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_DEMAND)
+        else:
+            ldap.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
         conn = ldap.initialize(Setting().get('ldap_uri'))
         conn.set_option(ldap.OPT_REFERRALS, ldap.OPT_OFF)
         conn.set_option(ldap.OPT_PROTOCOL_VERSION, 3)

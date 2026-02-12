@@ -45,7 +45,7 @@ class Setting(db.Model):
         except Exception as e:
             current_app.logger.error('Cannot set maintenance to {0}. DETAIL: {1}'.format(
                 mode, e))
-            current_app.logger.debug(traceback.format_exec())
+            current_app.logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
@@ -67,7 +67,7 @@ class Setting(db.Model):
         except Exception as e:
             current_app.logger.error('Cannot toggle setting {0}. DETAIL: {1}'.format(
                 setting, e))
-            current_app.logger.debug(traceback.format_exec())
+            current_app.logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
@@ -90,7 +90,7 @@ class Setting(db.Model):
             return True
         except Exception as e:
             current_app.logger.error('Cannot edit setting {0}. DETAIL: {1}'.format(setting, e))
-            current_app.logger.debug(traceback.format_exec())
+            current_app.logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
