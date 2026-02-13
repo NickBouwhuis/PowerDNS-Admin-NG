@@ -6,6 +6,7 @@ import dns.name
 from flask import current_app
 from distutils.util import strtobool
 from itertools import groupby
+from sqlalchemy import select
 
 from ..lib import utils
 from ..services.pdns_client import PowerDNSClient
@@ -391,10 +392,15 @@ class Record(object):
         if Setting().get('auto_ptr'):
             auto_ptr_enabled = True
         else:
-            domain_obj = Domain.query.filter(Domain.name == domain_name).first()
-            domain_setting = DomainSetting.query.filter(
-                DomainSetting.domain == domain_obj).filter(
-                    DomainSetting.setting == 'auto_ptr').first()
+            domain_obj = db.session.execute(
+                select(Domain).where(Domain.name == domain_name)
+            ).scalar_one_or_none()
+            domain_setting = db.session.execute(
+                select(DomainSetting).where(
+                    DomainSetting.domain == domain_obj,
+                    DomainSetting.setting == 'auto_ptr',
+                )
+            ).scalar_one_or_none()
             auto_ptr_enabled = strtobool(
                 domain_setting.value) if domain_setting else False
 
@@ -604,7 +610,9 @@ class Record(object):
                                  verify=Setting().get('verify_ssl_connections'))
         serial = jdata['serial']
 
-        domain = Domain.query.filter(Domain.name == domain).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain)
+        ).scalar_one_or_none()
         if domain:
             domain.serial = serial
             db.session.commit()

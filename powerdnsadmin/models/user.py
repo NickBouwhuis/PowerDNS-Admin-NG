@@ -13,6 +13,8 @@ import qrcode as qrc
 import qrcode.image.svg as qrc_svg
 from io import BytesIO
 
+from sqlalchemy import select, delete, func
+
 from .base import db
 from .role import Role
 from .setting import Setting
@@ -116,11 +118,13 @@ class User(db.Model):
         return False
 
     def get_user_info_by_id(self):
-        user_info = User.query.get(int(self.id))
+        user_info = db.session.get(User, int(self.id))
         return user_info
 
     def get_user_info_by_username(self):
-        user_info = User.query.filter(User.username == self.username).first()
+        user_info = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
         return user_info
 
     def ldap_init_conn(self):
@@ -194,8 +198,9 @@ class User(db.Model):
         role_name = 'User'
 
         if method == 'LOCAL':
-            user_info = User.query.filter(
-                User.username == self.username).first()
+            user_info = db.session.execute(
+                select(User).where(User.username == self.username)
+            ).scalar_one_or_none()
 
             if user_info:
                 if trust_user or (user_info.password and self.check_password(
@@ -361,7 +366,9 @@ class User(db.Model):
                     return False
 
             # create user if not exist in the db
-            if not User.query.filter(User.username == self.username).first():
+            if not db.session.execute(
+                select(User).where(User.username == self.username)
+            ).scalar_one_or_none():
                 self.firstname = self.username
                 self.lastname = ''
                 try:
@@ -384,12 +391,16 @@ class User(db.Model):
                     current_app.logger.debug(traceback.format_exc())
 
                 # first register user will be in Administrator role
-                if User.query.count() == 0:
-                    self.role_id = Role.query.filter_by(
-                        name='Administrator').first().id
+                if db.session.execute(
+                    select(func.count()).select_from(User)
+                ).scalar() == 0:
+                    self.role_id = db.session.execute(
+                        select(Role).where(Role.name == 'Administrator')
+                    ).scalar_one().id
                 else:
-                    self.role_id = Role.query.filter_by(
-                        name=role_name).first().id
+                    self.role_id = db.session.execute(
+                        select(Role).where(Role.name == role_name)
+                    ).scalar_one().id
 
                 self.create_user()
                 current_app.logger.info('Created user "{0}" in the DB'.format(
@@ -422,21 +433,30 @@ class User(db.Model):
         Create local user witch stores username / password in the DB
         """
         # check if username existed
-        user = User.query.filter(str(User.username).lower() == self.username.lower()).first()
+        user = db.session.execute(
+            select(User).where(func.lower(User.username) == self.username.lower())
+        ).scalar_one_or_none()
         if user:
             return {'status': False, 'msg': 'Username is already in use'}
 
         # check if email existed
-        user = User.query.filter(str(User.email).lower() == self.email.lower()).first()
+        user = db.session.execute(
+            select(User).where(func.lower(User.email) == self.email.lower())
+        ).scalar_one_or_none()
         if user:
             return {'status': False, 'msg': 'Email address is already in use'}
 
         # first register user will be in Administrator role
         if self.role_id is None:
-            self.role_id = Role.query.filter_by(name='User').first().id
-        if User.query.count() == 0:
-            self.role_id = Role.query.filter_by(
-                name='Administrator').first().id
+            self.role_id = db.session.execute(
+                select(Role).where(Role.name == 'User')
+            ).scalar_one().id
+        if db.session.execute(
+            select(func.count()).select_from(User)
+        ).scalar() == 0:
+            self.role_id = db.session.execute(
+                select(Role).where(Role.name == 'Administrator')
+            ).scalar_one().id
 
         if hasattr(self, "plain_text_password"):
             if self.plain_text_password != None:
@@ -461,13 +481,17 @@ class User(db.Model):
             return {'status': False, 'msg': 'No user name specified'}
 
         # read user and check that it exists
-        user = User.query.filter(User.username == self.username).first()
+        user = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
         if not user:
             return {'status': False, 'msg': 'User does not exist'}
 
         # check if new email exists (only if changed)
         if user.email != self.email:
-            checkuser = User.query.filter(User.email == self.email).first()
+            checkuser = db.session.execute(
+                select(User).where(User.email == self.email)
+            ).scalar_one_or_none()
             if checkuser:
                 return {
                     'status': False,
@@ -491,7 +515,9 @@ class User(db.Model):
         """
         Update user profile
         """
-        user = User.query.filter(User.username == self.username).first()
+        user = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
         if not user:
             return False
 
@@ -506,9 +532,12 @@ class User(db.Model):
         if self.email:
             # Can not update to a new email that
             # already been used.
-            existing_email = User.query.filter(
-                User.email == self.email,
-                User.username != self.username).first()
+            existing_email = db.session.execute(
+                select(User).where(
+                    User.email == self.email,
+                    User.username != self.username,
+                )
+            ).scalar_one_or_none()
             if existing_email:
                 return False
             # If need to verify new email,
@@ -551,21 +580,22 @@ class User(db.Model):
         return self.get_domain_query().all()
 
     def get_user_domains(self):
-        from ..models.base import db
         from .account import Account
         from .domain import Domain
         from .account_user import AccountUser
         from .domain_user import DomainUser
+        from sqlalchemy import or_
 
-        domains = db.session.query(Domain) \
-        .outerjoin(DomainUser, Domain.id == DomainUser.domain_id) \
-        .outerjoin(Account, Domain.account_id == Account.id) \
-        .outerjoin(AccountUser, Account.id == AccountUser.account_id) \
-        .filter(
-                db.or_(
+        domains = db.session.execute(
+            select(Domain)
+            .outerjoin(DomainUser, Domain.id == DomainUser.domain_id)
+            .outerjoin(Account, Domain.account_id == Account.id)
+            .outerjoin(AccountUser, Account.id == AccountUser.account_id)
+            .where(or_(
                 DomainUser.user_id == self.id,
-                AccountUser.user_id == self.id
-                )).all()
+                AccountUser.user_id == self.id,
+            ))
+        ).scalars().all()
         return domains
 
     def delete(self):
@@ -576,7 +606,9 @@ class User(db.Model):
         self.revoke_privilege()
 
         try:
-            User.query.filter(User.username == self.username).delete()
+            db.session.execute(
+                delete(User).where(User.username == self.username)
+            )
             db.session.commit()
             return True
         except Exception as e:
@@ -589,14 +621,20 @@ class User(db.Model):
         """
         Revoke all privileges from a user
         """
-        user = User.query.filter(User.username == self.username).first()
+        user = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
 
         if user:
             user_id = user.id
             try:
-                DomainUser.query.filter(DomainUser.user_id == user_id).delete()
+                db.session.execute(
+                    delete(DomainUser).where(DomainUser.user_id == user_id)
+                )
                 if (update_user)==True:
-                    AccountUser.query.filter(AccountUser.user_id == user_id).delete()
+                    db.session.execute(
+                        delete(AccountUser).where(AccountUser.user_id == user_id)
+                    )
                 db.session.commit()
                 return True
             except Exception as e:
@@ -608,9 +646,13 @@ class User(db.Model):
         return False
 
     def set_role(self, role_name):
-        role = Role.query.filter(Role.name == role_name).first()
+        role = db.session.execute(
+            select(Role).where(Role.name == role_name)
+        ).scalar_one_or_none()
         if role:
-            user = User.query.filter(User.username == self.username).first()
+            user = db.session.execute(
+                select(User).where(User.username == self.username)
+            ).scalar_one_or_none()
             user.role_id = role.id
             db.session.commit()
             return {'status': True, 'msg': 'Set user role successfully'}
@@ -628,14 +670,14 @@ class User(db.Model):
         from .account import Account
         from .account_user import AccountUser
         accounts = []
-        query = db.session\
-            .query(
-                AccountUser,
-                Account)\
-            .filter(self.id == AccountUser.user_id)\
-            .filter(Account.id == AccountUser.account_id)\
-            .order_by(Account.name)\
-            .all()
+        query = db.session.execute(
+            select(AccountUser, Account)
+            .where(
+                self.id == AccountUser.user_id,
+                Account.id == AccountUser.account_id,
+            )
+            .order_by(Account.name)
+        ).all()
         for q in query:
             accounts.append(q[1])
         return accounts
@@ -698,9 +740,13 @@ class User(db.Model):
         Add domain gathered by autoprovisioning to the current zones list of a user
         """
         from ..models.domain import Domain
-        user = db.session.query(User).filter(User.username == self.username).first()
+        user = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
         if autoprovision_domain not in current_domains:
-            domain= db.session.query(Domain).filter(Domain.name == autoprovision_domain).first()
+            domain = db.session.execute(
+                select(Domain).where(Domain.name == autoprovision_domain)
+            ).scalar_one_or_none()
             if domain!=None:
                 domain.add_user(user)
 
@@ -709,9 +755,13 @@ class User(db.Model):
         Add account gathered by autoprovisioning to the current accounts list of a user
         """
         from ..models.account import Account
-        user = db.session.query(User).filter(User.username == self.username).first()
+        user = db.session.execute(
+            select(User).where(User.username == self.username)
+        ).scalar_one_or_none()
         if autoprovision_account not in current_accounts:
-            account= db.session.query(Account).filter(Account.name == autoprovision_account).first()
+            account = db.session.execute(
+                select(Account).where(Account.name == autoprovision_account)
+            ).scalar_one_or_none()
             if account!=None:
                 account.add_user(user)
 
@@ -746,7 +796,7 @@ def getCorrectEntitlements(Entitlements):
 
         entArgs=arguments[arguments.index('powerdns-admin')+1:]
         role=entArgs[0]
-        roles= Role.query.all()
+        roles = db.session.execute(select(Role)).scalars().all()
         role_names=get_role_names(roles)
 
         if role not in role_names:
@@ -778,8 +828,10 @@ def getCorrectEntitlements(Entitlements):
 
 def checkIfDomainExists(domainName):
     from ..models.domain import Domain
-    domain= db.session.query(Domain).filter(Domain.name == domainName)
-    if len(domain.all())==0:
+    result = db.session.execute(
+        select(Domain).where(Domain.name == domainName)
+    ).scalars().all()
+    if len(result)==0:
         e= domainName + " is not found in the database"
         current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
         return False
@@ -787,8 +839,10 @@ def checkIfDomainExists(domainName):
 
 def checkIfAccountExists(accountName):
     from ..models.account import Account
-    account= db.session.query(Account).filter(Account.name == accountName)
-    if len(account.all())==0:
+    result = db.session.execute(
+        select(Account).where(Account.name == accountName)
+    ).scalars().all()
+    if len(result)==0:
         e= accountName + " is not found in the database"
         current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
         return False

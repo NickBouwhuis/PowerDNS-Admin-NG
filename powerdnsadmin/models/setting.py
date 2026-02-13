@@ -3,6 +3,7 @@ import traceback
 import pytimeparse
 from ast import literal_eval
 from flask import current_app, g
+from sqlalchemy import select, delete
 from .base import db
 from powerdnsadmin.lib.settings import AppSettings
 
@@ -43,8 +44,9 @@ class Setting(db.Model):
         self.value = value
 
     def set_maintenance(self, mode):
-        maintenance = Setting.query.filter(
-            Setting.name == 'maintenance').first()
+        maintenance = db.session.execute(
+            select(Setting).where(Setting.name == 'maintenance')
+        ).scalar_one_or_none()
 
         if maintenance is None:
             value = AppSettings.defaults['maintenance']
@@ -67,7 +69,9 @@ class Setting(db.Model):
             return False
 
     def toggle(self, setting):
-        current_setting = Setting.query.filter(Setting.name == setting).first()
+        current_setting = db.session.execute(
+            select(Setting).where(Setting.name == setting)
+        ).scalar_one_or_none()
 
         if current_setting is None:
             value = AppSettings.defaults[setting]
@@ -91,7 +95,9 @@ class Setting(db.Model):
 
     def set(self, setting, value):
         import json
-        current_setting = Setting.query.filter(Setting.name == setting).first()
+        current_setting = db.session.execute(
+            select(Setting).where(Setting.name == setting)
+        ).scalar_one_or_none()
 
         if current_setting is None:
             current_setting = Setting(name=setting, value=None)
@@ -126,7 +132,9 @@ class Setting(db.Model):
         if setting.upper() in current_app.config:
             result = current_app.config[setting.upper()]
         else:
-            result = self.query.filter(Setting.name == setting).first()
+            result = db.session.execute(
+                select(Setting).where(Setting.name == setting)
+            ).scalar_one_or_none()
 
         if result is not None:
             if hasattr(result, 'value'):

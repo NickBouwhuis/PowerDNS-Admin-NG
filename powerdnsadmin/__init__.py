@@ -116,28 +116,38 @@ def create_app(config=None):
         from flask_sslify import SSLify
         _sslify = SSLify(app)  # lgtm [py/unused-local-variable]
 
-    # Load Flask-Session
+    # Initialize database and migrations first (before Flask-Session)
+    models.init_app(app)
+
+    # Load Flask-Session -- use our existing db instance to avoid
+    # Flask-SQLAlchemy 3.x duplicate registration error
     app.config['SESSION_TYPE'] = app.config.get('SESSION_TYPE')
     if 'SESSION_TYPE' in os.environ:
         app.config['SESSION_TYPE'] = os.environ.get('SESSION_TYPE')
 
+    if app.config.get('SESSION_TYPE') == 'sqlalchemy':
+        from .models.base import db as _db
+        app.config['SESSION_SQLALCHEMY'] = _db
+
     sess = Session(app)
 
-    # create sessions table if using sqlalchemy backend
-    if os.environ.get('SESSION_TYPE') == 'sqlalchemy':
-        sess.app.session_interface.db.create_all()
+    # Flask-SQLAlchemy 3.x requires app context for create_all()
+    # and some extensions (e.g. flask_session_captcha) call it during init
+    with app.app_context():
+        # create sessions table if using sqlalchemy backend
+        if app.config.get('SESSION_TYPE') == 'sqlalchemy':
+            sess.app.session_interface.db.create_all()
 
-    # SMTP
-    app.mail = Mail(app)
+        # SMTP
+        app.mail = Mail(app)
 
-    # Rate limiting
-    limiter.init_app(app)
+        # Rate limiting
+        limiter.init_app(app)
 
-    # Load app's components
-    assets.init_app(app)
-    models.init_app(app)
-    routes.init_app(app)
-    services.init_app(app)
+        # Load app's components
+        assets.init_app(app)
+        routes.init_app(app)
+        services.init_app(app)
 
     # Register filters
     app.jinja_env.filters['display_record_name'] = utils.display_record_name

@@ -2,6 +2,7 @@ import traceback
 
 from flask import current_app
 from datetime import datetime
+from sqlalchemy import delete
 
 from .base import db
 
@@ -45,7 +46,7 @@ class History(db.Model):
         Remove all history from DB
         """
         try:
-            db.session.query(History).delete()
+            db.session.execute(delete(History))
             db.session.commit()
             current_app.logger.info("Removed all history")
             return True

@@ -1,6 +1,7 @@
 import traceback
 from flask import current_app
 from urllib.parse import urljoin
+from sqlalchemy import select, delete
 
 from ..lib import utils
 from ..lib.errors import InvalidAccountNameException
@@ -66,7 +67,7 @@ class Account(db.Model):
         """
         Convert account_id to account_name
         """
-        account = Account.query.filter(Account.id == account_id).first()
+        account = db.session.get(Account, account_id)
         if account is None:
             return ''
 
@@ -80,7 +81,9 @@ class Account(db.Model):
         if account_name is None or account_name == "":
             return None
 
-        account = Account.query.filter(Account.name == account_name).first()
+        account = db.session.execute(
+            select(Account).where(Account.name == account_name)
+        ).scalar_one_or_none()
         if account is None:
             return None
 
@@ -93,7 +96,9 @@ class Account(db.Model):
         self.name = Account.sanitize_name(self.name)
 
         # Check that account name is not already used
-        account = Account.query.filter(Account.name == self.name).first()
+        account = db.session.execute(
+            select(Account).where(Account.name == self.name)
+        ).scalar_one_or_none()
         if account:
             return {'status': False, 'msg': 'Account already exists'}
 
@@ -110,7 +115,9 @@ class Account(db.Model):
             return {'status': False, 'msg': 'No account name specified'}
 
         # read account and check that it exists
-        account = Account.query.filter(Account.name == self.name).first()
+        account = db.session.execute(
+            select(Account).where(Account.name == self.name)
+        ).scalar_one_or_none()
         if not account:
             return {'status': False, 'msg': 'Account does not exist'}
 
@@ -129,7 +136,9 @@ class Account(db.Model):
         self.grant_privileges([])
 
         try:
-            Account.query.filter(Account.name == self.name).delete()
+            db.session.execute(
+                delete(Account).where(Account.name == self.name)
+            )
             if commit:
                 db.session.commit()
             return True
@@ -145,11 +154,13 @@ class Account(db.Model):
         Get users (id) associated with this account
         """
         user_ids = []
-        query = db.session.query(
-            AccountUser,
-            Account).filter(User.id == AccountUser.user_id).filter(
-                Account.id == AccountUser.account_id).filter(
-                    Account.name == self.name).all()
+        query = db.session.execute(
+            select(AccountUser, Account).where(
+                User.id == AccountUser.user_id,
+                Account.id == AccountUser.account_id,
+                Account.name == self.name,
+            )
+        ).all()
         for q in query:
             user_ids.append(q[0].user_id)
         return user_ids
@@ -163,7 +174,9 @@ class Account(db.Model):
         account_user_ids = self.get_user()
         new_user_ids = [
             u.id
-            for u in User.query.filter(User.username.in_(new_user_list)).all()
+            for u in db.session.execute(
+                select(User).where(User.username.in_(new_user_list))
+            ).scalars().all()
         ] if new_user_list else []
 
         removed_ids = list(set(account_user_ids).difference(new_user_ids))
@@ -171,8 +184,12 @@ class Account(db.Model):
 
         try:
             for uid in removed_ids:
-                AccountUser.query.filter(AccountUser.user_id == uid).filter(
-                    AccountUser.account_id == account_id).delete()
+                db.session.execute(
+                    delete(AccountUser).where(
+                        AccountUser.user_id == uid,
+                        AccountUser.account_id == account_id,
+                    )
+                )
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -224,8 +241,12 @@ class Account(db.Model):
         """
         # TODO: This func is currently used by SAML feature in a wrong way. Fix it
         try:
-            AccountUser.query.filter(AccountUser.user_id == user.id).filter(
-                AccountUser.account_id == self.id).delete()
+            db.session.execute(
+                delete(AccountUser).where(
+                    AccountUser.user_id == user.id,
+                    AccountUser.account_id == self.id,
+                )
+            )
             db.session.commit()
             return True
         except Exception as e:
@@ -239,7 +260,7 @@ class Account(db.Model):
         """
         Fetch accounts from PowerDNS and syncs them into DB
         """
-        db_accounts = Account.query.all()
+        db_accounts = db.session.execute(select(Account)).scalars().all()
         list_db_accounts = [d.name for d in db_accounts]
         current_app.logger.info("Found {} accounts in PowerDNS-Admin".format(
             len(list_db_accounts)))
@@ -264,7 +285,7 @@ class Account(db.Model):
                     if not account_id:
                         continue
                     current_app.logger.info("Deleting account for {0}".format(account_name))
-                    account = Account.query.get(account_id)
+                    account = db.session.get(Account, account_id)
                     account.delete_account(commit=False)
             except Exception as e:
                 current_app.logger.error(

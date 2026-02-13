@@ -2,6 +2,7 @@ import secrets
 import string
 import bcrypt
 from flask import current_app
+from sqlalchemy import select
 
 from .base import db
 from ..models.role import Role
@@ -40,7 +41,9 @@ class ApiKey(db.Model):
 
     def create(self):
         try:
-            self.role = Role.query.filter(Role.name == self.role_name).first()
+            self.role = db.session.execute(
+                select(Role).where(Role.name == self.role_name)
+            ).scalar_one_or_none()
             db.session.add(self)
             db.session.commit()
         except Exception as e:
@@ -61,22 +64,24 @@ class ApiKey(db.Model):
     def update(self, role_name=None, description=None, domains=None, accounts=None):
         try:
           if role_name:
-              role = Role.query.filter(Role.name == role_name).first()
+              role = db.session.execute(
+                  select(Role).where(Role.name == role_name)
+              ).scalar_one_or_none()
               self.role_id = role.id
 
           if description:
               self.description = description
 
           if domains is not None:
-              domain_object_list = Domain.query \
-                                       .filter(Domain.name.in_(domains)) \
-                                       .all()
+              domain_object_list = db.session.execute(
+                  select(Domain).where(Domain.name.in_(domains))
+              ).scalars().all()
               self.domains[:] = domain_object_list
 
           if accounts is not None:
-              account_object_list = Account.query \
-                                       .filter(Account.name.in_(accounts)) \
-                                       .all()
+              account_object_list = db.session.execute(
+                  select(Account).where(Account.name.in_(accounts))
+              ).scalars().all()
               self.accounts[:] = account_object_list
 
           db.session.commit()
@@ -123,9 +128,9 @@ class ApiKey(db.Model):
         """
         if method == 'LOCAL':
             passw_hash = self.get_hashed_password(self.plain_text_password)
-            apikey = ApiKey.query \
-                           .filter(ApiKey.key == passw_hash.decode('utf-8')) \
-                           .first()
+            apikey = db.session.execute(
+                select(ApiKey).where(ApiKey.key == passw_hash.decode('utf-8'))
+            ).scalar_one_or_none()
 
             if not apikey:
                 raise Exception("Unauthorized")

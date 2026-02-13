@@ -4,6 +4,7 @@ import traceback
 from flask import current_app
 from flask_login import current_user
 from distutils.util import strtobool
+from sqlalchemy import select, delete, or_
 
 from ..services.pdns_client import PowerDNSClient
 from .base import db, domain_apikey
@@ -85,7 +86,9 @@ class Domain(db.Model):
         Return domain id
         """
         try:
-            domain = Domain.query.filter(Domain.name == name).first()
+            domain = db.session.execute(
+                select(Domain).where(Domain.name == name)
+            ).scalar_one_or_none()
             return domain.id
         except Exception as e:
             current_app.logger.error(
@@ -112,7 +115,7 @@ class Domain(db.Model):
         """
         Fetch zones (zones) from PowerDNS and update into DB
         """
-        db_domain = Domain.query.all()
+        db_domain = db.session.execute(select(Domain)).scalars().all()
         list_db_domain = [d.name for d in db_domain]
         dict_db_domain = dict((x.name, x) for x in db_domain)
         current_app.logger.info("Found {} zones in PowerDNS-Admin".format(
@@ -292,7 +295,9 @@ class Domain(db.Model):
             raise
 
     def update_soa_setting(self, domain_name, soa_edit_api):
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
             return {'status': 'error', 'msg': 'Zone does not exist.'}
 
@@ -332,7 +337,9 @@ class Domain(db.Model):
         """
         Update zone kind: Native / Master / Slave
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
             return {'status': 'error', 'msg': 'Zone does not exist.'}
 
@@ -368,10 +375,15 @@ class Domain(db.Model):
         Check the existing reverse lookup zone,
         if not exists create a new one automatically
         """
-        domain_obj = Domain.query.filter(Domain.name == domain_name).first()
-        domain_auto_ptr = DomainSetting.query.filter(
-            DomainSetting.domain == domain_obj).filter(
-            DomainSetting.setting == 'auto_ptr').first()
+        domain_obj = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
+        domain_auto_ptr = db.session.execute(
+            select(DomainSetting).where(
+                DomainSetting.domain == domain_obj,
+                DomainSetting.setting == 'auto_ptr',
+            )
+        ).scalar_one_or_none()
         domain_auto_ptr = strtobool(
             domain_auto_ptr.value) if domain_auto_ptr else False
         system_auto_ptr = Setting().get('auto_ptr')
@@ -467,27 +479,27 @@ class Domain(db.Model):
 
     def delete_domain_from_pdnsadmin(self, domain_name, do_commit=True):
         # Revoke permission before deleting zone
-        domain = Domain.query.filter(Domain.name == domain_name).first()
-        domain_user = DomainUser.query.filter(
-            DomainUser.domain_id == domain.id)
-        if domain_user:
-            domain_user.delete()
-        domain_setting = DomainSetting.query.filter(
-            DomainSetting.domain_id == domain.id)
-        if domain_setting:
-            domain_setting.delete()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
+        db.session.execute(
+            delete(DomainUser).where(DomainUser.domain_id == domain.id)
+        )
+        db.session.execute(
+            delete(DomainSetting).where(DomainSetting.domain_id == domain.id)
+        )
         domain.apikeys[:] = []
 
         # Remove history for zone
         if not Setting().get('preserve_history'):
-            domain_history = History.query.filter(
-                History.domain_id == domain.id
+            db.session.execute(
+                delete(History).where(History.domain_id == domain.id)
             )
-            if domain_history:
-                domain_history.delete()
 
         # then remove zone
-        Domain.query.filter(Domain.name == domain_name).delete()
+        db.session.execute(
+            delete(Domain).where(Domain.name == domain_name)
+        )
         if do_commit:
             db.session.commit()
         current_app.logger.info(
@@ -499,10 +511,13 @@ class Domain(db.Model):
         Get users (id) who have access to this zone name
         """
         user_ids = []
-        query = db.session.query(
-            DomainUser, Domain).filter(User.id == DomainUser.user_id).filter(
-            Domain.id == DomainUser.domain_id).filter(
-            Domain.name == self.name).all()
+        query = db.session.execute(
+            select(DomainUser, Domain).where(
+                User.id == DomainUser.user_id,
+                Domain.id == DomainUser.domain_id,
+                Domain.name == self.name,
+            )
+        ).all()
         for q in query:
             user_ids.append(q[0].user_id)
         return user_ids
@@ -520,8 +535,12 @@ class Domain(db.Model):
 
         try:
             for uid in removed_ids:
-                DomainUser.query.filter(DomainUser.user_id == uid).filter(
-                    DomainUser.domain_id == domain_id).delete()
+                db.session.execute(
+                    delete(DomainUser).where(
+                        DomainUser.user_id == uid,
+                        DomainUser.domain_id == domain_id,
+                    )
+                )
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -573,7 +592,9 @@ class Domain(db.Model):
         """
         Update records from Master DNS server
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
             try:
                 client = PowerDNSClient()
@@ -595,7 +616,9 @@ class Domain(db.Model):
         """
         Get zone DNSSEC information
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
             try:
                 client = PowerDNSClient()
@@ -623,7 +646,9 @@ class Domain(db.Model):
         """
         Enable zone DNSSEC
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
             try:
                 client = PowerDNSClient()
@@ -671,7 +696,9 @@ class Domain(db.Model):
         """
         Remove keys DNSSEC
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
             try:
                 client = PowerDNSClient()
@@ -727,7 +754,9 @@ class Domain(db.Model):
             return {'status': False, 'msg': 'No zone name specified'}
 
         # read domain and check that it exists
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
             return {'status': False, 'msg': 'Zone does not exist'}
 
@@ -769,7 +798,9 @@ class Domain(db.Model):
         """
         Get current account associated with this zone
         """
-        domain = Domain.query.filter(Domain.name == self.name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == self.name)
+        ).scalar_one_or_none()
 
         return domain.account
 
@@ -778,15 +809,19 @@ class Domain(db.Model):
         Check if the user is allowed to access this
         zone name
         """
-        return db.session.query(Domain) \
-            .outerjoin(DomainUser, Domain.id == DomainUser.domain_id) \
-            .outerjoin(Account, Domain.account_id == Account.id) \
-            .outerjoin(AccountUser, Account.id == AccountUser.account_id) \
-            .filter(
-            db.or_(
-                DomainUser.user_id == user_id,
-                AccountUser.user_id == user_id
-            )).filter(Domain.id == self.id).first()
+        return db.session.execute(
+            select(Domain)
+            .outerjoin(DomainUser, Domain.id == DomainUser.domain_id)
+            .outerjoin(Account, Domain.account_id == Account.id)
+            .outerjoin(AccountUser, Account.id == AccountUser.account_id)
+            .where(
+                or_(
+                    DomainUser.user_id == user_id,
+                    AccountUser.user_id == user_id,
+                ),
+                Domain.id == self.id,
+            )
+        ).scalar_one_or_none()
 
     # Return None if this zone does not exist as record, 
     # Return the parent zone that hold the record if exist
