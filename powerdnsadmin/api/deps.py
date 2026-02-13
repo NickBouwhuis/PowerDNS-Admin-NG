@@ -19,10 +19,14 @@ Usage in route functions:
 """
 import base64
 import binascii
+import json
 import logging
 from typing import Union
+from urllib.parse import urljoin
 
+import requests as http_requests
 from fastapi import Depends, Header, HTTPException, Query, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -229,3 +233,211 @@ def require_apikey_role(*roles: str):
         return apikey
 
     return dependency
+
+
+# ── API Key domain-access dependencies ──────────────────────────────
+
+
+def apikey_can_access_domain(
+    request: Request,
+    apikey=Depends(get_current_apikey),
+):
+    """Check that the API key has access to the requested zone.
+
+    Replaces @apikey_can_access_domain decorator.
+    Admin/Operator keys have unrestricted access.
+    User keys must have the zone explicitly assigned (directly or via account).
+    """
+    if apikey.role.name in ("Administrator", "Operator"):
+        return apikey
+
+    zone_id = request.path_params.get("zone_id", "").rstrip(".")
+    if not zone_id:
+        return apikey
+
+    domain_names = [item.name for item in apikey.domains]
+    accounts_domains = [d.name for a in apikey.accounts for d in a.domains]
+    allowed = set(domain_names + accounts_domains)
+
+    if zone_id not in allowed:
+        raise HTTPException(status_code=403, detail="Zone access not allowed")
+
+    return apikey
+
+
+def apikey_can_create_domain(
+    request: Request,
+    apikey=Depends(get_current_apikey),
+):
+    """Check API key can create zones (replaces @apikey_can_create_domain).
+
+    Admins/Operators always can. Users need allow_user_create_domain setting.
+    Also checks deny_domain_override if enabled.
+    """
+    from powerdnsadmin.models.setting import Setting
+    from powerdnsadmin.models.domain import Domain
+
+    flask_app = _get_flask_app(request)
+    with flask_app.app_context():
+        if (apikey.role.name not in ("Administrator", "Operator")
+                and not Setting().get("allow_user_create_domain")):
+            raise HTTPException(
+                status_code=401,
+                detail="API key does not have enough privileges to create zone",
+            )
+
+        if Setting().get("deny_domain_override"):
+            try:
+                body = json.loads(request._body) if hasattr(request, '_body') else {}
+            except (json.JSONDecodeError, TypeError):
+                body = {}
+            name = body.get("name")
+            if name and Domain().is_overriding(name):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Zone override of record not allowed",
+                )
+
+    return apikey
+
+
+def apikey_can_remove_domain(
+    request: Request,
+    apikey=Depends(get_current_apikey),
+):
+    """Check API key can remove zones (replaces @apikey_can_remove_domain).
+
+    Only checked for DELETE requests.
+    """
+    from powerdnsadmin.models.setting import Setting
+
+    if request.method != "DELETE":
+        return apikey
+
+    flask_app = _get_flask_app(request)
+    with flask_app.app_context():
+        if (apikey.role.name not in ("Administrator", "Operator")
+                and not Setting().get("allow_user_remove_domain")):
+            raise HTTPException(
+                status_code=401,
+                detail="API key does not have enough privileges to remove zone",
+            )
+
+    return apikey
+
+
+def apikey_can_configure_dnssec(
+    request: Request,
+    apikey=Depends(get_current_apikey),
+):
+    """Check API key can configure DNSSEC (replaces @apikey_can_configure_dnssec)."""
+    from powerdnsadmin.models.setting import Setting
+
+    flask_app = _get_flask_app(request)
+    with flask_app.app_context():
+        if (apikey.role.name not in ("Administrator", "Operator")
+                and Setting().get("dnssec_admins_only")):
+            raise HTTPException(
+                status_code=403,
+                detail="API key does not have enough privileges to configure DNSSEC",
+            )
+
+    return apikey
+
+
+def user_can_create_domain(
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Check user can create zones (replaces @api_can_create_domain).
+
+    Admins/Operators always can. Users need allow_user_create_domain setting.
+    """
+    from powerdnsadmin.models.setting import Setting
+    from powerdnsadmin.models.domain import Domain
+
+    flask_app = _get_flask_app(request)
+    with flask_app.app_context():
+        if (user.role.name not in ("Administrator", "Operator")
+                and not Setting().get("allow_user_create_domain")):
+            raise HTTPException(
+                status_code=401,
+                detail="User does not have enough privileges to create zone",
+            )
+
+        if Setting().get("deny_domain_override"):
+            try:
+                body = json.loads(request._body) if hasattr(request, '_body') else {}
+            except (json.JSONDecodeError, TypeError):
+                body = {}
+            name = body.get("name")
+            if name and Domain().is_overriding(name):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Zone override of record not allowed",
+                )
+
+    return user
+
+
+# ── PowerDNS API forwarding ─────────────────────────────────────────
+
+
+async def forward_to_pdns(request: Request) -> Response:
+    """Forward a FastAPI request to the PowerDNS API.
+
+    Replaces helper.forward_request() for FastAPI routes.
+    Returns a FastAPI Response with the PowerDNS API response data.
+    """
+    from powerdnsadmin.models.setting import Setting
+
+    flask_app = _get_flask_app(request)
+    with flask_app.app_context():
+        setting = Setting()
+        api_url = setting.get("pdns_api_url")
+        api_key = setting.get("pdns_api_key")
+        verify_ssl = setting.get("verify_ssl_connections")
+
+    # Build target URL: base URL + the original request path + query string
+    path = request.url.path
+    query = str(request.url.query) if request.url.query else ""
+    target_url = urljoin(api_url, path)
+    if query:
+        target_url += "?" + query
+
+    headers = {
+        "X-API-Key": api_key,
+        "user-agent": "powerdns-admin/api",
+        "pragma": "no-cache",
+        "cache-control": "no-cache",
+        "accept": "application/json; q=1",
+    }
+
+    body = None
+    if request.method not in ("GET", "DELETE"):
+        body = await request.body()
+        if body:
+            headers["Content-Type"] = "application/json"
+
+    logger.debug("Forwarding %s %s to PowerDNS API", request.method, target_url)
+
+    resp = http_requests.request(
+        request.method,
+        target_url,
+        headers=headers,
+        verify=bool(verify_ssl),
+        data=body,
+    )
+
+    # Build response headers, excluding hop-by-hop headers
+    excluded_headers = {"transfer-encoding", "connection", "keep-alive"}
+    resp_headers = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() not in excluded_headers
+    }
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers=resp_headers,
+    )
