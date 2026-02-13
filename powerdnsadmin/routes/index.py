@@ -34,6 +34,7 @@ from ..services.oidc import oidc_oauth
 from ..services.saml import SAML
 from ..services.token import confirm_token
 from ..services.email import send_account_verification
+from ..services.auth.oauth_handler import OAuthUserService
 
 google = None
 github = None
@@ -166,23 +167,16 @@ def login():
 
     if 'google_token' in session:
         user_data = json.loads(google.get('userinfo').text)
-        google_first_name = user_data['given_name']
-        google_last_name = user_data['family_name']
-        google_email = user_data['email']
-        user = User.query.filter_by(username=google_email).first()
-        if user is None:
-            user = User.query.filter_by(email=google_email).first()
-        if not user:
-            user = User(username=google_email,
-                        firstname=google_first_name,
-                        lastname=google_last_name,
-                        plain_text_password=None,
-                        email=google_email)
-
-            result = user.create_local_user()
-            if not result['status']:
-                session.pop('google_token', None)
-                return redirect(url_for('index.login'))
+        oauth_svc = OAuthUserService()
+        user, _created, error = oauth_svc.find_or_create_user(
+            username=user_data['email'],
+            firstname=user_data['given_name'],
+            lastname=user_data['family_name'],
+            email=user_data['email'],
+        )
+        if error:
+            session.pop('google_token', None)
+            return redirect(url_for('index.login'))
 
         session['user_id'] = user.id
         session['authentication_type'] = 'OAuth'
@@ -190,32 +184,17 @@ def login():
 
     if 'github_token' in session:
         user_data = json.loads(github.get('user').text)
-        github_username = user_data['login']
-        github_first_name = user_data['name']
-        github_last_name = ''
-        github_email = user_data['email']
-
-        # If the user's full name from GitHub contains at least two words, use the first word as the first name and
-        # the rest as the last name.
-        github_name_parts = github_first_name.split(' ')
-        if len(github_name_parts) > 1:
-            github_first_name = github_name_parts[0]
-            github_last_name = ' '.join(github_name_parts[1:])
-
-        user = User.query.filter_by(username=github_username).first()
-        if user is None:
-            user = User.query.filter_by(email=github_email).first()
-        if not user:
-            user = User(username=github_username,
-                        plain_text_password=None,
-                        firstname=github_first_name,
-                        lastname=github_last_name,
-                        email=github_email)
-
-            result = user.create_local_user()
-            if not result['status']:
-                session.pop('github_token', None)
-                return redirect(url_for('index.login'))
+        oauth_svc = OAuthUserService()
+        first_name, last_name = oauth_svc.parse_full_name(user_data['name'])
+        user, _created, error = oauth_svc.find_or_create_user(
+            username=user_data['login'],
+            firstname=first_name,
+            lastname=last_name,
+            email=user_data['email'],
+        )
+        if error:
+            session.pop('github_token', None)
+            return redirect(url_for('index.login'))
 
         session['user_id'] = user.id
         session['authentication_type'] = 'OAuth'
@@ -236,69 +215,42 @@ def login():
         else:
             mygroups = []
 
-        azure_username = user_data["userPrincipalName"]
-        azure_first_name = user_data["givenName"]
-        azure_last_name = user_data["surname"]
-        if "mail" in user_data:
-            azure_email = user_data["mail"]
-        else:
-            azure_email = ""
-        if not azure_email:
-            azure_email = user_data["userPrincipalName"]
+        azure_username = re.sub(r"#.*$", "", user_data["userPrincipalName"])
+        azure_email = re.sub(r"#.*$", "",
+                             user_data.get("mail") or user_data["userPrincipalName"])
 
-        # Handle foreign principals such as guest users
-        azure_email = re.sub(r"#.*$", "", azure_email)
-        azure_username = re.sub(r"#.*$", "", azure_username)
-
-        user = User.query.filter_by(username=azure_username).first()
-        if not user:
-            user = User(username=azure_username,
-                        plain_text_password=None,
-                        firstname=azure_first_name,
-                        lastname=azure_last_name,
-                        email=azure_email)
-
-            result = user.create_local_user()
-            if not result['status']:
-                current_app.logger.warning('Unable to create ' + azure_username + ' Reasoning: ' + result['msg'])
-                session.pop('azure_token', None)
-                # note: a redirect to login results in an endless loop, so render the login page instead
-                return render_template('login.html',
-                                       saml_enabled=SAML_ENABLED,
-                                       error=('User ' + azure_username +
-                                              ' cannot be created.'))
+        oauth_svc = OAuthUserService()
+        user, _created, error = oauth_svc.find_or_create_user(
+            username=azure_username,
+            firstname=user_data["givenName"],
+            lastname=user_data["surname"],
+            email=azure_email,
+            fallback_email=False,
+        )
+        if error:
+            session.pop('azure_token', None)
+            return render_template('login.html',
+                                   saml_enabled=SAML_ENABLED,
+                                   error=('User ' + azure_username +
+                                          ' cannot be created.'))
 
         session['user_id'] = user.id
         session['authentication_type'] = 'OAuth'
 
         # Handle group memberships, if defined
         if Setting().get('azure_sg_enabled'):
-            if Setting().get('azure_admin_group') in mygroups:
-                current_app.logger.info('Setting role for user ' +
-                                        azure_username +
-                                        ' to Administrator due to group membership')
-                user.set_role("Administrator")
-            else:
-                if Setting().get('azure_operator_group') in mygroups:
-                    current_app.logger.info('Setting role for user ' +
-                                            azure_username +
-                                            ' to Operator due to group membership')
-                    user.set_role("Operator")
-                else:
-                    if Setting().get('azure_user_group') in mygroups:
-                        current_app.logger.info('Setting role for user ' +
-                                                azure_username +
-                                                ' to User due to group membership')
-                        user.set_role("User")
-                    else:
-                        current_app.logger.warning('User ' +
-                                                   azure_username +
-                                                   ' has no relevant group memberships')
-                        session.pop('azure_token', None)
-                        return render_template('login.html',
-                                               saml_enabled=SAML_ENABLED,
-                                               error=('User ' + azure_username +
-                                                      ' is not in any authorised groups.'))
+            authorized, _role = OAuthUserService.assign_role_from_groups(
+                user, mygroups,
+                admin_group=Setting().get('azure_admin_group'),
+                operator_group=Setting().get('azure_operator_group'),
+                user_group=Setting().get('azure_user_group'),
+            )
+            if not authorized:
+                session.pop('azure_token', None)
+                return render_template('login.html',
+                                       saml_enabled=SAML_ENABLED,
+                                       error=('User ' + azure_username +
+                                              ' is not in any authorised groups.'))
 
         # Handle account/group creation, if enabled
         if Setting().get('azure_group_accounts_enabled') and mygroups:
@@ -400,24 +352,23 @@ def login():
         oidc_last_name = user_data[Setting().get('oidc_oauth_last_name')]
         oidc_email = user_data[Setting().get('oidc_oauth_email')]
 
-        user = User.query.filter_by(username=oidc_username).first()
-        if not user:
-            user = User(username=oidc_username,
-                        plain_text_password=None,
-                        firstname=oidc_first_name,
-                        lastname=oidc_last_name,
-                        email=oidc_email)
-            result = user.create_local_user()
-        else:
-            user.firstname = oidc_first_name
-            user.lastname = oidc_last_name
-            user.email = oidc_email
-            user.plain_text_password = None
-            result = user.update_local_user()
-
-        if not result['status']:
+        oauth_svc = OAuthUserService()
+        user, created, error = oauth_svc.find_or_create_user(
+            username=oidc_username,
+            firstname=oidc_first_name,
+            lastname=oidc_last_name,
+            email=oidc_email,
+            fallback_email=False,
+        )
+        if error:
             session.pop('oidc_token', None)
             return redirect(url_for('index.login'))
+        if not created:
+            success, error = oauth_svc.update_user_profile(
+                user, oidc_first_name, oidc_last_name, oidc_email)
+            if not success:
+                session.pop('oidc_token', None)
+                return redirect(url_for('index.login'))
 
         # This checks if the account_name_property and account_description property were included in settings.
         if Setting().get('oidc_oauth_account_name_property') and Setting().get(
