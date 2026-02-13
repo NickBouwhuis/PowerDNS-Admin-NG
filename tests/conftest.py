@@ -2,17 +2,25 @@ import os
 from base64 import b64encode
 
 import pytest
-from flask_migrate import upgrade as flask_migrate_upgrade
 
-from powerdnsadmin import create_app
-from powerdnsadmin.models.api_key import ApiKey
-from powerdnsadmin.models.base import db
-from powerdnsadmin.models.setting import Setting
-from powerdnsadmin.models.user import User
+try:
+    from flask_migrate import upgrade as flask_migrate_upgrade
+    from powerdnsadmin import create_app
+    from powerdnsadmin.models.api_key import ApiKey
+    from powerdnsadmin.models.base import db
+    from powerdnsadmin.models.setting import Setting
+    from powerdnsadmin.models.user import User
+    HAS_FLASK = True
+except ImportError:
+    HAS_FLASK = False
+
+_requires_flask = pytest.mark.skipif(not HAS_FLASK, reason="Flask not installed")
 
 
 @pytest.fixture(scope="session")
 def app():
+    if not HAS_FLASK:
+        pytest.skip("Flask not installed")
     app = create_app('../configs/test.py')
     yield app
 
