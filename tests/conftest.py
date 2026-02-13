@@ -4,10 +4,10 @@ from base64 import b64encode
 import pytest
 
 try:
-    from flask_migrate import upgrade as flask_migrate_upgrade
     from powerdnsadmin import create_app
     from powerdnsadmin.models.api_key import ApiKey
     from powerdnsadmin.models.base import db
+    from powerdnsadmin.models.role import Role
     from powerdnsadmin.models.setting import Setting
     from powerdnsadmin.models.user import User
     HAS_FLASK = True
@@ -48,6 +48,10 @@ def load_data(setting_name, *args, **kwargs):
         return True
     if setting_name == 'allow_user_remove_domain':
         return True
+    if setting_name == 'pdns_api_timeout':
+        return 5
+    if setting_name == 'verify_ssl_connections':
+        return False
 
 
 @pytest.fixture
@@ -87,21 +91,31 @@ def basic_auth_user_headers(app):
 @pytest.fixture(scope="module")
 def initial_data(app):
 
-    pdns_proto = os.environ['PDNS_PROTO']
-    pdns_host = os.environ['PDNS_HOST']
-    pdns_port = os.environ['PDNS_PORT']
+    pdns_proto = os.environ.get('PDNS_PROTO', 'http')
+    pdns_host = os.environ.get('PDNS_HOST', 'localhost')
+    pdns_port = os.environ.get('PDNS_PORT', '8081')
     pdns_api_url = '{0}://{1}:{2}'.format(pdns_proto, pdns_host, pdns_port)
 
     api_url_setting = Setting('pdns_api_url', pdns_api_url)
-    api_key_setting = Setting('pdns_api_key', os.environ['PDNS_API_KEY'])
+    api_key_setting = Setting('pdns_api_key', os.environ.get('PDNS_API_KEY', 'test-api-key'))
     allow_create_domain_setting = Setting('allow_user_create_domain', True)
 
     with app.app_context():
         try:
-            flask_migrate_upgrade(directory="migrations")
+            db.drop_all()
+            db.create_all()
+
+            # Seed roles (migrations normally do this)
+            db.session.add_all([
+                Role(name='Administrator', description='Administrator'),
+                Role(name='User', description='User'),
+                Role(name='Operator', description='Operator'),
+            ])
+
             db.session.add(api_url_setting)
             db.session.add(api_key_setting)
             db.session.add(allow_create_domain_setting)
+            db.session.commit()
 
             test_user = app.config.get('TEST_USER')
             test_user_pass = app.config.get('TEST_USER_PASSWORD')
@@ -129,28 +143,37 @@ def initial_data(app):
             raise e
 
     yield
-    os.unlink(app.config['TEST_DB_LOCATION'])
 
 
 @pytest.fixture(scope="module")
 def initial_apikey_data(app):
-    pdns_proto = os.environ['PDNS_PROTO']
-    pdns_host = os.environ['PDNS_HOST']
-    pdns_port = os.environ['PDNS_PORT']
+    pdns_proto = os.environ.get('PDNS_PROTO', 'http')
+    pdns_host = os.environ.get('PDNS_HOST', 'localhost')
+    pdns_port = os.environ.get('PDNS_PORT', '8081')
     pdns_api_url = '{0}://{1}:{2}'.format(pdns_proto, pdns_host, pdns_port)
 
     api_url_setting = Setting('pdns_api_url', pdns_api_url)
-    api_key_setting = Setting('pdns_api_key', os.environ['PDNS_API_KEY'])
+    api_key_setting = Setting('pdns_api_key', os.environ.get('PDNS_API_KEY', 'test-api-key'))
     allow_create_domain_setting = Setting('allow_user_create_domain', True)
     allow_remove_domain_setting = Setting('allow_user_remove_domain', True)
 
     with app.app_context():
         try:
-            flask_migrate_upgrade(directory="migrations")
+            db.drop_all()
+            db.create_all()
+
+            # Seed roles (migrations normally do this)
+            db.session.add_all([
+                Role(name='Administrator', description='Administrator'),
+                Role(name='User', description='User'),
+                Role(name='Operator', description='Operator'),
+            ])
+
             db.session.add(api_url_setting)
             db.session.add(api_key_setting)
             db.session.add(allow_create_domain_setting)
             db.session.add(allow_remove_domain_setting)
+            db.session.commit()
 
             test_user_apikey = app.config.get('TEST_USER_APIKEY')
             test_admin_apikey = app.config.get('TEST_ADMIN_APIKEY')
@@ -178,7 +201,6 @@ def initial_apikey_data(app):
             raise e
 
     yield
-    os.unlink(app.config['TEST_DB_LOCATION'])
 
 
 @pytest.fixture

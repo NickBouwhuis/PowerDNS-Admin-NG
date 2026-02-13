@@ -57,13 +57,18 @@ def run_migrations_online():
                 logger.info('No changes in schema detected.')
 
     connectable = current_app.extensions['migrate'].db.engine
+    configure_args = current_app.extensions['migrate'].configure_args
+
+    # Set render_as_batch for SQLite unless already specified
+    if 'render_as_batch' not in configure_args:
+        configure_args['render_as_batch'] = config.get_main_option(
+            'sqlalchemy.url', '').startswith('sqlite:')
 
     with connectable.connect() as connection:
         context.configure(connection=connection,
                           target_metadata=target_metadata,
                           process_revision_directives=process_revision_directives,
-                          render_as_batch=config.get_main_option('sqlalchemy.url', '').startswith('sqlite:'),
-                          **current_app.extensions['migrate'].configure_args)
+                          **configure_args)
 
         with context.begin_transaction():
             context.run_migrations()
