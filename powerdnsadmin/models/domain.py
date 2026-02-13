@@ -3,10 +3,9 @@ import re
 import traceback
 from flask import current_app
 from flask_login import current_user
-from urllib.parse import urljoin
 from distutils.util import strtobool
 
-from ..lib import utils
+from ..services.pdns_client import PowerDNSClient
 from .base import db, domain_apikey
 from .setting import Setting
 from .user import User
@@ -52,11 +51,6 @@ class Domain(db.Model):
         self.last_check = last_check
         self.dnssec = dnssec
         self.account_id = account_id
-        # PDNS configs
-        self.PDNS_STATS_URL = Setting().get('pdns_api_url')
-        self.PDNS_API_KEY = Setting().get('pdns_api_key')
-        self.PDNS_VERSION = Setting().get('pdns_version')
-        self.API_EXTENDED_URL = utils.pdns_api_extended_uri(self.PDNS_VERSION)
 
     def __repr__(self):
         return '<Domain {0}>'.format(self.name)
@@ -76,28 +70,15 @@ class Domain(db.Model):
         """
         Get all zones which has in PowerDNS
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-        jdata = utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                 '/servers/localhost/zones/{0}'.format(domain_name)),
-            headers=headers,
-            timeout=int(
-                Setting().get('pdns_api_timeout')),
-            verify=Setting().get('verify_ssl_connections'))
-        return jdata
+        client = PowerDNSClient()
+        return client.get_zone(domain_name)
 
     def get_domains(self):
         """
         Get all zones which has in PowerDNS
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-        jdata = utils.fetch_json(
-            urljoin(self.PDNS_STATS_URL,
-                    self.API_EXTENDED_URL + '/servers/localhost/zones'),
-            headers=headers,
-            timeout=int(Setting().get('pdns_api_timeout')),
-            verify=Setting().get('verify_ssl_connections'))
-        return jdata
+        client = PowerDNSClient()
+        return client.list_zones()
 
     def get_id_by_name(self, name):
         """
@@ -136,14 +117,9 @@ class Domain(db.Model):
         dict_db_domain = dict((x.name, x) for x in db_domain)
         current_app.logger.info("Found {} zones in PowerDNS-Admin".format(
             len(list_db_domain)))
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         try:
-            jdata = utils.fetch_json(
-                urljoin(self.PDNS_STATS_URL,
-                        self.API_EXTENDED_URL + '/servers/localhost/zones'),
-                headers=headers,
-                timeout=int(Setting().get('pdns_api_timeout')),
-                verify=Setting().get('verify_ssl_connections'))
+            client = PowerDNSClient()
+            jdata = client.list_zones()
             list_jdomain = [d['name'].rstrip('.') for d in jdata]
             current_app.logger.info(
                 "Found {} zones in PowerDNS server".format(len(list_jdomain)))
@@ -236,36 +212,16 @@ class Domain(db.Model):
         """
         Add a zone to power dns
         """
-
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
-        domain_name = domain_name + '.'
-        domain_ns = [ns + '.' for ns in domain_ns]
-
-        if soa_edit_api not in ["DEFAULT", "INCREASE", "EPOCH", "OFF"]:
-            soa_edit_api = 'DEFAULT'
-
-        elif soa_edit_api == 'OFF':
-            soa_edit_api = ''
-
-        post_data = {
-            "name": domain_name,
-            "kind": domain_type,
-            "masters": domain_master_ips,
-            "nameservers": domain_ns,
-            "soa_edit_api": soa_edit_api,
-            "account": account_name
-        }
-
         try:
-            jdata = utils.fetch_json(
-                urljoin(self.PDNS_STATS_URL,
-                        self.API_EXTENDED_URL + '/servers/localhost/zones'),
-                headers=headers,
-                timeout=int(Setting().get('pdns_api_timeout')),
-                method='POST',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.create_zone(
+                name=domain_name,
+                kind=domain_type,
+                nameservers=domain_ns,
+                masters=domain_master_ips,
+                soa_edit_api=soa_edit_api,
+                account=account_name,
+            )
             if 'error' in jdata.keys():
                 current_app.logger.error(jdata['error'])
                 if jdata.get('http_code') == 409:
@@ -275,7 +231,14 @@ class Domain(db.Model):
                 current_app.logger.info(
                     'Added zone successfully to PowerDNS: {0}'.format(
                         domain_name))
-                self.add_domain_to_powerdns_admin(domain_dict=post_data)
+                self.add_domain_to_powerdns_admin(domain_dict={
+                    "name": domain_name + '.' if not domain_name.endswith('.') else domain_name,
+                    "kind": domain_type,
+                    "masters": domain_master_ips,
+                    "nameservers": domain_ns,
+                    "soa_edit_api": soa_edit_api,
+                    "account": account_name,
+                })
                 return {'status': 'ok', 'msg': 'Added zone successfully'}
         except Exception as e:
             current_app.logger.error('Cannot add zone {0} {1}'.format(
@@ -287,17 +250,10 @@ class Domain(db.Model):
         """
         Read zone from PowerDNS and add into PDNS-Admin
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         if not domain:
             try:
-                domain = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(
-                                                 domain_dict['name'])),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    verify=Setting().get('verify_ssl_connections'))
+                client = PowerDNSClient()
+                domain = client.get_zone(domain_dict['name'])
             except Exception as e:
                 current_app.logger.error('Can not read zone from PDNS')
                 current_app.logger.error(e)
@@ -340,26 +296,16 @@ class Domain(db.Model):
         if not domain:
             return {'status': 'error', 'msg': 'Zone does not exist.'}
 
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
         if soa_edit_api not in ["DEFAULT", "INCREASE", "EPOCH", "OFF"]:
             soa_edit_api = 'DEFAULT'
-
         elif soa_edit_api == 'OFF':
             soa_edit_api = ''
 
         post_data = {"soa_edit_api": soa_edit_api, "kind": domain.type}
 
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain.name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain.name, post_data)
             if 'error' in jdata.keys():
                 current_app.logger.error(jdata['error'])
                 return {'status': 'error', 'msg': jdata['error']}
@@ -388,22 +334,13 @@ class Domain(db.Model):
         """
         domain = Domain.query.filter(Domain.name == domain_name).first()
         if not domain:
-            return {'status': 'error', 'msg': 'Znoe does not exist.'}
-
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
+            return {'status': 'error', 'msg': 'Zone does not exist.'}
 
         post_data = {"kind": kind, "masters": masters}
 
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain.name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain.name, post_data)
             if 'error' in jdata.keys():
                 current_app.logger.error(jdata['error'])
                 return {'status': 'error', 'msg': jdata['error']}
@@ -521,15 +458,8 @@ class Domain(db.Model):
         """
         Delete a single zone name from powerdns
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-
-        utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                 '/servers/localhost/zones/{0}'.format(domain_name)),
-            headers=headers,
-            timeout=int(Setting().get('pdns_api_timeout')),
-            method='DELETE',
-            verify=Setting().get('verify_ssl_connections'))
+        client = PowerDNSClient()
+        client.delete_zone(domain_name)
         current_app.logger.info(
             'Deleted zone successfully from PowerDNS: {0}'.format(
                 domain_name))
@@ -643,21 +573,11 @@ class Domain(db.Model):
         """
         Update records from Master DNS server
         """
-        import urllib.parse
-
         domain = Domain.query.filter(Domain.name == domain_name).first()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY}
             try:
-                r = utils.fetch_json(urljoin(
-                    self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                         '/servers/localhost/zones/{0}/axfr-retrieve'.format(
-                                             urllib.parse.quote_plus(domain.name))),
-                    headers=headers,
-                    timeout=int(
-                        Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'))
+                client = PowerDNSClient()
+                r = client.axfr_retrieve(domain.name)
                 return {'status': 'ok', 'msg': r.get('result')}
             except Exception as e:
                 current_app.logger.error(
@@ -675,22 +595,12 @@ class Domain(db.Model):
         """
         Get zone DNSSEC information
         """
-        import urllib.parse
-
         domain = Domain.query.filter(Domain.name == domain_name).first()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY}
             try:
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys'.format(
-                                                 urllib.parse.quote_plus(domain.name))),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='GET',
-                    verify=Setting().get('verify_ssl_connections'))
-                if 'error' in jdata:
+                client = PowerDNSClient()
+                jdata = client.get_cryptokeys(domain.name)
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg': 'DNSSEC is not enabled for this zone'
@@ -713,26 +623,14 @@ class Domain(db.Model):
         """
         Enable zone DNSSEC
         """
-        import urllib.parse
-
         domain = Domain.query.filter(Domain.name == domain_name).first()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
             try:
+                client = PowerDNSClient()
+
                 # Enable API-RECTIFY for domain, BEFORE activating DNSSEC
-                post_data = {"api_rectify": True}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(
-                                                 urllib.parse.quote_plus(domain.name)
-                                             )),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.update_zone(domain.name, {"api_rectify": True})
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg':
@@ -741,19 +639,8 @@ class Domain(db.Model):
                     }
 
                 # Activate DNSSEC
-                post_data = {"keytype": "ksk", "active": True}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys'.format(
-                                                 urllib.parse.quote_plus(domain.name)
-                                             )),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='POST',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.create_cryptokey(domain.name, keytype='ksk', active=True)
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status':
                             'error',
@@ -784,22 +671,13 @@ class Domain(db.Model):
         """
         Remove keys DNSSEC
         """
-        import urllib.parse
-
         domain = Domain.query.filter(Domain.name == domain_name).first()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
             try:
+                client = PowerDNSClient()
+
                 # Deactivate DNSSEC
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys/{1}'.format(
-                                                 urllib.parse.quote_plus(domain.name), key_id)),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='DELETE',
-                    verify=Setting().get('verify_ssl_connections'))
+                jdata = client.delete_cryptokey(domain.name, key_id)
                 if jdata != True:
                     return {
                         'status':
@@ -812,17 +690,8 @@ class Domain(db.Model):
                     }
 
                 # Disable API-RECTIFY for zone, AFTER deactivating DNSSEC
-                post_data = {"api_rectify": False}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(domain.name)),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.update_zone(domain.name, {"api_rectify": False})
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg':
@@ -862,23 +731,12 @@ class Domain(db.Model):
         if not domain:
             return {'status': False, 'msg': 'Zone does not exist'}
 
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
         account_name_old = Account().get_name_by_id(domain.account_id)
         account_name = Account().get_name_by_id(account_id)
 
-        post_data = {"account": account_name}
-
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain_name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain_name, {"account": account_name})
 
             if 'error' in jdata.keys():
                 current_app.logger.error(jdata['error'])

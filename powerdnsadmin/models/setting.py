@@ -2,9 +2,25 @@ import sys
 import traceback
 import pytimeparse
 from ast import literal_eval
-from flask import current_app
+from flask import current_app, g
 from .base import db
 from powerdnsadmin.lib.settings import AppSettings
+
+
+def _get_settings_cache():
+    """Get or create the per-request settings cache on Flask g."""
+    if not hasattr(g, '_settings_cache'):
+        g._settings_cache = {}
+    return g._settings_cache
+
+
+def _invalidate_settings_cache(setting_name=None):
+    """Invalidate the per-request settings cache (single key or all)."""
+    if hasattr(g, '_settings_cache'):
+        if setting_name:
+            g._settings_cache.pop(setting_name, None)
+        else:
+            g._settings_cache.clear()
 
 
 class Setting(db.Model):
@@ -41,6 +57,7 @@ class Setting(db.Model):
             if maintenance.value != mode:
                 maintenance.value = mode
                 db.session.commit()
+            _invalidate_settings_cache('maintenance')
             return True
         except Exception as e:
             current_app.logger.error('Cannot set maintenance to {0}. DETAIL: {1}'.format(
@@ -63,6 +80,7 @@ class Setting(db.Model):
             else:
                 current_setting.value = "True"
             db.session.commit()
+            _invalidate_settings_cache(setting)
             return True
         except Exception as e:
             current_app.logger.error('Cannot toggle setting {0}. DETAIL: {1}'.format(
@@ -87,6 +105,7 @@ class Setting(db.Model):
         try:
             current_setting.value = value
             db.session.commit()
+            _invalidate_settings_cache(setting)
             return True
         except Exception as e:
             current_app.logger.error('Cannot edit setting {0}. DETAIL: {1}'.format(setting, e))
@@ -95,22 +114,29 @@ class Setting(db.Model):
             return False
 
     def get(self, setting):
-        if setting in AppSettings.defaults:
-
-            if setting.upper() in current_app.config:
-                result = current_app.config[setting.upper()]
-            else:
-                result = self.query.filter(Setting.name == setting).first()
-
-            if result is not None:
-                if hasattr(result, 'value'):
-                    result = result.value
-
-                return AppSettings.convert_type(setting, result)
-            else:
-                return AppSettings.defaults[setting]
-        else:
+        if setting not in AppSettings.defaults:
             current_app.logger.error('Unknown setting queried: {0}'.format(setting))
+            return None
+
+        # Check per-request cache first
+        cache = _get_settings_cache()
+        if setting in cache:
+            return cache[setting]
+
+        if setting.upper() in current_app.config:
+            result = current_app.config[setting.upper()]
+        else:
+            result = self.query.filter(Setting.name == setting).first()
+
+        if result is not None:
+            if hasattr(result, 'value'):
+                result = result.value
+            value = AppSettings.convert_type(setting, result)
+        else:
+            value = AppSettings.defaults[setting]
+
+        cache[setting] = value
+        return value
 
     def get_group(self, group):
         if not isinstance(group, list):

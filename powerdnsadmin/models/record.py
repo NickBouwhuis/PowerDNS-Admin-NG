@@ -4,11 +4,11 @@ import dns.reversename
 import dns.inet
 import dns.name
 from flask import current_app
-from urllib.parse import urljoin
 from distutils.util import strtobool
 from itertools import groupby
 
-from .. import utils
+from ..lib import utils
+from ..services.pdns_client import PowerDNSClient
 from .base import db
 from .setting import Setting
 from .domain import Domain
@@ -37,26 +37,15 @@ class Record(object):
         self.ttl = ttl
         self.data = data
         self.comment_data = comment_data
-        # PDNS configs
-        self.PDNS_STATS_URL = Setting().get('pdns_api_url')
-        self.PDNS_API_KEY = Setting().get('pdns_api_key')
-        self.PDNS_VERSION = Setting().get('pdns_version')
-        self.API_EXTENDED_URL = utils.pdns_api_extended_uri(self.PDNS_VERSION)
         self.PRETTY_IPV6_PTR = Setting().get('pretty_ipv6_ptr')
 
     def get_rrsets(self, domain):
         """
         Query zone's rrsets via PDNS API
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                '/servers/localhost/zones/{0}'.format(domain)),
-                                     timeout=int(
-                                         Setting().get('pdns_api_timeout')),
-                                     headers=headers,
-                                     verify=Setting().get('verify_ssl_connections'))
+            client = PowerDNSClient()
+            jdata = client.get_zone(domain)
         except Exception as e:
             current_app.logger.error(
                 "Cannot fetch zone's record data from remote powerdns api. DETAIL: {0}"
