@@ -26,9 +26,9 @@ class ApiKey(db.Model):
                                secondary="apikey_account",
                                back_populates="apikeys")
 
-    def __init__(self, key=None, desc=None, role_name=None, domains=[], accounts=[]):
+    def __init__(self, key=None, desc=None, description=None, role_name=None, domains=[], accounts=[]):
         self.id = None
-        self.description = desc
+        self.description = description or desc
         self.role_name = role_name
         self.domains[:] = domains
         self.accounts[:] = accounts
