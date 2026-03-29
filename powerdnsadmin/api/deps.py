@@ -44,14 +44,17 @@ def db_session_cleanup():
     thread, guaranteed to hit the right thread-local).
     """
     from powerdnsadmin.models.base import db
-    db.session.remove()
+    if db._scoped_session is not None:
+        db.session.remove()
     try:
         yield
     except Exception:
-        db.session.rollback()
+        if db._scoped_session is not None:
+            db.session.rollback()
         raise
     finally:
-        db.session.remove()
+        if db._scoped_session is not None:
+            db.session.remove()
 
 
 def get_current_user(
