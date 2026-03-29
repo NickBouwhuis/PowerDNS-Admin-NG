@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(gh issue list:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh auth:*)",
+      "Bash(npm run build:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(sqlite3:*)",
+      "Bash(npm run build:js:*)",
+      "Bash(python3:*)",
+      "Bash(curl:*)",
+      "Bash(npm install:*)",
+      "Bash(npx next build:*)",
+      "Bash(grep:*)",
+      "Bash(npx shadcn@latest add command:*)",
+      "Bash(lsof:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npx tsc:*)",
+      "Bash(PDNS_ADMIN_LOG_LEVEL=DEBUG python3:*)",
+      "Bash(PDNS_ADMIN_LOG_LEVEL=WARNING python3:*)",
+      "Bash(# Login and capture session cookie, then test zone detail curl -s -c /tmp/cookies.txt -X POST http://localhost:9191/api/v2/auth/login \\\\ -H \"\"Content-Type: application/json\"\" \\\\ -d ''{\"\"username\"\":\"\"testadmin\"\",\"\"password\"\":\"\"testadmin123\"\",\"\"auth_method\"\":\"\"LOCAL\"\"}'' # Test zone list first curl -s -b /tmp/cookies.txt http://localhost:9191/api/v2/zones 2>&1)",
+      "Bash(# Login and get cookies curl -s -c /tmp/cookies.txt -X POST http://localhost:9191/api/v2/auth/login \\\\ -H \"\"Content-Type: application/json\"\" \\\\ -d ''{\"\"username\"\":\"\"testadmin\"\",\"\"password\"\":\"\"testadmin123\"\",\"\"auth_method\"\":\"\"LOCAL\"\"}'' # Test zone detail curl -s -b /tmp/cookies.txt http://localhost:9191/api/v2/zones/detail/0x5e.eu 2>&1)",
+      "Bash(# Kill existing backend kill 53364 ; sleep 1 # Restart python3 -c \"\" from powerdnsadmin.app import create_app import uvicorn app = create_app\\(\\) uvicorn.run\\(app, host=''0.0.0.0'', port=9191, log_level=''info''\\) \"\" &>/dev/null & echo \"\"Backend restarted, PID: $!\"\" sleep 2 echo \"\"Checking port...\"\" lsof -i :9191)",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin log --all --oneline -- \"powerdnsadmin/templates/domain.html\")",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin log --all --oneline -- \"powerdnsadmin/static/custom/js/custom.js\")",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin show bcb766f:powerdnsadmin/templates/domain.html)",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin log --all --name-only --pretty=format: -- \"powerdnsadmin/templates/*.html\")",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin log --all --pretty=format: --name-only -- \"*\")",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin show bcb766f:powerdnsadmin/templates/zone_record_helper.html)",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin log --all --oneline -- \"powerdnsadmin/templates/zone_record_helper.html\")",
+      "Bash(git -C /Users/nick/src/PowerDNS-Admin show ff0334f:powerdnsadmin/templates/zone_record_helper.html)"
+    ]
+  }
+}

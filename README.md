@@ -1,98 +1,138 @@
-# PowerDNS-Admin
+# PowerDNS-Admin NG
 
-A PowerDNS web interface with advanced features.
+A modern PowerDNS web interface with advanced features. Community-maintained fork of [PowerDNS-Admin](https://github.com/PowerDNS-Admin/PowerDNS-Admin) with a completely rewritten backend (FastAPI + SQLAlchemy 2.x) and a new Next.js frontend.
 
-[![CodeQL](https://github.com/PowerDNS-Admin/PowerDNS-Admin/actions/workflows/codeql-analysis.yml/badge.svg?branch=master)](https://github.com/PowerDNS-Admin/PowerDNS-Admin/actions/workflows/codeql-analysis.yml)
-[![Docker Image](https://github.com/PowerDNS-Admin/PowerDNS-Admin/actions/workflows/build-and-publish.yml/badge.svg?branch=master)](https://github.com/PowerDNS-Admin/PowerDNS-Admin/actions/workflows/build-and-publish.yml)
+[![CI](https://github.com/NickBouwhuis/PowerDNS-Admin-NG/actions/workflows/ci.yml/badge.svg)](https://github.com/NickBouwhuis/PowerDNS-Admin-NG/actions/workflows/ci.yml)
+[![Docker Image](https://ghcr.io/nickbouwhuis/powerdns-admin-ng)](https://github.com/NickBouwhuis/PowerDNS-Admin-NG/pkgs/container/powerdns-admin-ng)
 
-#### Features:
+## What's New
 
-- Provides forward and reverse zone management
-- Provides zone templating features
-- Provides user management with role based access control
-- Provides zone specific access control
-- Provides activity logging
+PowerDNS-Admin NG is a ground-up modernization of the original PowerDNS-Admin:
+
+- **FastAPI backend** replacing Flask -- async-ready, OpenAPI docs, Pydantic validation
+- **SQLAlchemy 2.x** with proper session management
+- **Next.js frontend** with App Router, shadcn/ui, TanStack Query/Table
+- **API v1** (backwards-compatible, API key + Basic auth) and **API v2** (session-based for the SPA)
+- **Multi-arch Docker images** (amd64 + arm64) published to GHCR
+- **Service layer** with clean separation of concerns
+- **Security hardened** -- bcrypt, CSRF protection, rate limiting
+
+## Features
+
+- Forward and reverse zone management
+- Zone templating
+- Role-based access control (Administrator, Operator, User)
+- Zone-specific access control
+- Activity logging
 - Authentication:
-  - Local User Support
-  - SAML Support
-  - LDAP Support: OpenLDAP / Active Directory
-  - OAuth Support: Google / GitHub / Azure / OpenID
-- Two-factor authentication support (TOTP)
-- PDNS Service Configuration & Statistics Monitoring
+  - Local users
+  - SAML
+  - LDAP (OpenLDAP / Active Directory)
+  - OAuth (Google / GitHub / Azure / OpenID Connect)
+- PDNS server configuration and statistics monitoring
 - DynDNS 2 protocol support
 - Easy IPv6 PTR record editing
-- Provides an API for zone and record management among other features
-- Provides full IDN/Punycode support
+- Full IDN/Punycode support
+- REST API for zone and record management
 
-## [Project Update - PLEASE READ!!!](https://github.com/PowerDNS-Admin/PowerDNS-Admin/discussions/1708)
+## Quick Start
 
-## Running PowerDNS-Admin
+### Docker (recommended)
 
-There are several ways to run PowerDNS-Admin. The quickest way is to use Docker.
-If you are looking to install and run PowerDNS-Admin directly onto your system, check out
-the [wiki](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/docs/wiki/) for ways to do that.
-
-### Docker
-
-Here are two options to run PowerDNS-Admin using Docker.
-To get started as quickly as possible, try option 1. If you want to make modifications to the configuration option 2 may
-be cleaner.
-
-#### Option 1: From Docker Hub
-
-To run the application using the latest stable release on Docker Hub, run the following command:
-
-```
-$ docker run -d \
-    -e SECRET_KEY='a-very-secret-key' \
-    -v pda-data:/data \
-    -p 9191:80 \
-    powerdnsadmin/pda-legacy:latest
+```bash
+docker run -d \
+  -e SECRET_KEY='change-me-to-a-random-string' \
+  -e SQLALCHEMY_DATABASE_URI='sqlite:////data/powerdns-admin.db' \
+  -v pda-data:/data \
+  -p 3000:3000 \
+  ghcr.io/nickbouwhuis/powerdns-admin-ng:latest
 ```
 
-This creates a volume named `pda-data` to persist the default SQLite database with app configuration.
+### Docker Compose
 
-#### Option 2: Using docker-compose
+```yaml
+services:
+  app:
+    image: ghcr.io/nickbouwhuis/powerdns-admin-ng:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - SECRET_KEY=change-me-to-a-random-string
+      - SQLALCHEMY_DATABASE_URI=mysql://pda:changeme@db/pda
+      - GUNICORN_WORKERS=2
+```
 
-1. Update the configuration   
-   Edit the `docker-compose.yml` file to update the database connection string in `SQLALCHEMY_DATABASE_URI`.
-   Other environment variables are mentioned in
-   the [AppSettings.defaults](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/powerdnsadmin/lib/settings.py) dictionary.
-   To use a Docker-style secrets convention, one may append `_FILE` to the environment variables with a path to a file
-   containing the intended value of the variable (e.g. `SQLALCHEMY_DATABASE_URI_FILE=/run/secrets/db_uri`).   
-   Make sure to set the environment variable `SECRET_KEY` to a long, random
-   string (https://flask.palletsprojects.com/en/1.1.x/config/#SECRET_KEY)
+Then visit http://localhost:3000.
 
-2. Start docker container
-   ```
-   $ docker-compose up
-   ```
+### With Traefik
 
-You can then access PowerDNS-Admin by pointing your browser to http://localhost:9191.
+```yaml
+services:
+  app:
+    image: ghcr.io/nickbouwhuis/powerdns-admin-ng:latest
+    restart: always
+    environment:
+      - SECRET_KEY=change-me-to-a-random-string
+      - SQLALCHEMY_DATABASE_URI=mysql://pda:changeme@db/pda
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pdnsa.rule=Host(`dns-admin.example.com`)"
+      - "traefik.http.routers.pdnsa.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pdnsa.loadbalancer.server.port=3000"
+```
 
-## Screenshots
+## Configuration
 
-![dashboard](docs/screenshots/dashboard.png)
+Configuration is loaded from environment variables. Key settings:
 
-## Support
+| Variable | Description | Default |
+|---|---|---|
+| `SECRET_KEY` | Session encryption key (required) | -- |
+| `SALT` | API key hashing salt | auto-generated |
+| `SQLALCHEMY_DATABASE_URI` | Database connection string | `sqlite:///pdns.db` |
+| `GUNICORN_WORKERS` | Number of backend workers | `4` |
+| `GUNICORN_TIMEOUT` | Worker timeout in seconds | `120` |
 
-**Looking for help?** Try taking a look at the project's
-[Support Guide](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/.github/SUPPORT.md) or joining
-our [Discord Server](https://discord.powerdnsadmin.org).
+All settings from [AppSettings.defaults](powerdnsadmin/lib/settings.py) can be set via environment variables. Append `_FILE` to any variable to read the value from a file (Docker secrets convention).
 
-## Security Policy
+## Architecture
 
-Please see our [Security Policy](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/SECURITY.md).
+```
+Browser --> Next.js (port 3000) --> FastAPI (port 9191) --> PowerDNS API
+                |                        |
+                |                        +---> MySQL/PostgreSQL/SQLite
+                +-- Static assets, SSR
+```
 
-## Contributing
+Inside the Docker container:
+- **Next.js** serves the SPA on port 3000 (user-facing)
+- **Gunicorn + Uvicorn** runs the FastAPI backend on port 9191 (internal)
+- **Alembic** handles database migrations on startup
 
-Please see our [Contribution Guide](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/docs/CONTRIBUTING.md).
+## Development
 
-## Code of Conduct
+```bash
+# Backend
+pip install -r requirements.txt
+uvicorn powerdnsadmin.app:create_app --factory --reload --port 9191
 
-Please see our [Code of Conduct Policy](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/docs/CODE_OF_CONDUCT.md).
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
+
+The Next.js dev server proxies API requests to the FastAPI backend at localhost:9191.
+
+## API
+
+- **API v1** (`/api/v1/`) -- PowerDNS-Admin compatible, Basic auth + API key
+- **API v2** (`/api/v2/`) -- Session-based, used by the SPA frontend
+- **OpenAPI docs** at `/api/docs` (Swagger UI) and `/api/redoc`
 
 ## License
 
-This project is released under the MIT license. For additional
-information, [see the full license](https://github.com/PowerDNS-Admin/PowerDNS-Admin/blob/master/LICENSE).
+MIT License. See [LICENSE](LICENSE).

@@ -3,16 +3,19 @@ import traceback
 import dns.reversename
 import dns.inet
 import dns.name
-from flask import current_app
-from urllib.parse import urljoin
+import logging
 from distutils.util import strtobool
 from itertools import groupby
+from sqlalchemy import select
 
-from .. import utils
+from ..lib import utils
+from ..services.pdns_client import PowerDNSClient
 from .base import db
 from .setting import Setting
 from .domain import Domain
 from .domain_setting import DomainSetting
+
+logger = logging.getLogger(__name__)
 
 
 def by_record_content_pair(e):
@@ -37,28 +40,17 @@ class Record(object):
         self.ttl = ttl
         self.data = data
         self.comment_data = comment_data
-        # PDNS configs
-        self.PDNS_STATS_URL = Setting().get('pdns_api_url')
-        self.PDNS_API_KEY = Setting().get('pdns_api_key')
-        self.PDNS_VERSION = Setting().get('pdns_version')
-        self.API_EXTENDED_URL = utils.pdns_api_extended_uri(self.PDNS_VERSION)
         self.PRETTY_IPV6_PTR = Setting().get('pretty_ipv6_ptr')
 
     def get_rrsets(self, domain):
         """
         Query zone's rrsets via PDNS API
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                '/servers/localhost/zones/{0}'.format(domain)),
-                                     timeout=int(
-                                         Setting().get('pdns_api_timeout')),
-                                     headers=headers,
-                                     verify=Setting().get('verify_ssl_connections'))
+            client = PowerDNSClient()
+            jdata = client.get_zone(domain)
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Cannot fetch zone's record data from remote powerdns api. DETAIL: {0}"
                 .format(e))
             return []
@@ -99,25 +91,16 @@ class Record(object):
                 }
 
         # Continue if the record is ready to be added
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                '/servers/localhost/zones/{0}'.format(domain_name)),
-                                     headers=headers,
-                                     timeout=int(
-                                         Setting().get('pdns_api_timeout')),
-                                     method='PATCH',
-                                     verify=Setting().get('verify_ssl_connections'),
-                                     data=rrset)
-            current_app.logger.debug(jdata)
+            client = PowerDNSClient()
+            jdata = client.patch_zone_rrsets(domain_name, rrset)
+            logger.debug(jdata)
             return {'status': 'ok', 'msg': 'Record was added successfully'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Cannot add record to zone {}. Error: {}".format(
                     domain_name, e))
-            current_app.logger.debug("Submitted record rrset: \n{}".format(
+            logger.debug("Submitted record rrset: \n{}".format(
                 utils.pretty_json(rrset)))
             return {
                 'status': 'error',
@@ -255,12 +238,12 @@ class Record(object):
         """
         # Create submitted rrsets from submitted records
         submitted_rrsets = self.build_rrsets(domain_name, submitted_records)
-        current_app.logger.debug(
+        logger.debug(
             "submitted_rrsets_data: \n{}".format(utils.pretty_json(submitted_rrsets)))
 
         # Current domain's rrsets in PDNS
         current_rrsets = self.get_rrsets(domain_name)
-        current_app.logger.debug("current_rrsets_data: \n{}".format(
+        logger.debug("current_rrsets_data: \n{}".format(
             utils.pretty_json(current_rrsets)))
 
         # Remove comment's 'modified_at' key
@@ -290,21 +273,14 @@ class Record(object):
                 r['changetype'] = 'DELETE'
                 del_rrsets["rrsets"].append(r)
 
-        current_app.logger.debug("new_rrsets: \n{}".format(utils.pretty_json(new_rrsets)))
-        current_app.logger.debug("del_rrsets: \n{}".format(utils.pretty_json(del_rrsets)))
+        logger.debug("new_rrsets: \n{}".format(utils.pretty_json(new_rrsets)))
+        logger.debug("del_rrsets: \n{}".format(utils.pretty_json(del_rrsets)))
 
         return new_rrsets, del_rrsets, zone_has_comments
 
     def apply_rrsets(self, domain_name, rrsets):
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-        jdata = utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-            '/servers/localhost/zones/{0}'.format(domain_name)),
-                                  headers=headers,
-                                  method='PATCH',
-                                  verify=Setting().get('verify_ssl_connections'),
-                                  data=rrsets)
-        return jdata
+        client = PowerDNSClient()
+        return client.patch_zone_rrsets(domain_name, rrsets)
 
     @staticmethod
     def to_api_payload(new_rrsets, del_rrsets, comments_supported):
@@ -354,7 +330,7 @@ class Record(object):
         will make 1 call to the PDNS API to DELETE and
         REPLACE records (rrsets)
         """
-        current_app.logger.debug(
+        logger.debug(
             "submitted_records: {}".format(submitted_records))
 
         # Get the list of rrsets to be added and deleted
@@ -363,14 +339,14 @@ class Record(object):
         # The history logic still needs *all* the deletes with full data to display a useful diff.
         # So create a "minified" copy for the api call, and return the original data back up
         api_payload = self.to_api_payload(new_rrsets['rrsets'], del_rrsets['rrsets'], zone_has_comments)
-        current_app.logger.debug(f"api payload: \n{utils.pretty_json(api_payload)}")
+        logger.debug(f"api payload: \n{utils.pretty_json(api_payload)}")
 
         # Submit the changes to PDNS API
         try:
             if api_payload["rrsets"]:
                 result = self.apply_rrsets(domain_name, api_payload)
                 if 'error' in result.keys():
-                    current_app.logger.error(
+                    logger.error(
                         'Cannot apply record changes. PDNS error: {}'
                         .format(result['error']))
                     return {
@@ -380,13 +356,13 @@ class Record(object):
 
             self.auto_ptr(domain_name, new_rrsets, del_rrsets)
             self.update_db_serial(domain_name)
-            current_app.logger.info('Record was applied successfully.')
+            logger.info('Record was applied successfully.')
             return {'status': 'ok', 'msg': 'Record was applied successfully', 'data': (new_rrsets, del_rrsets)}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Cannot apply record changes to zone {0}. Error: {1}".format(
                     domain_name, e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
             return {
                 'status': 'error',
                 'msg':
@@ -402,10 +378,15 @@ class Record(object):
         if Setting().get('auto_ptr'):
             auto_ptr_enabled = True
         else:
-            domain_obj = Domain.query.filter(Domain.name == domain_name).first()
-            domain_setting = DomainSetting.query.filter(
-                DomainSetting.domain == domain_obj).filter(
-                    DomainSetting.setting == 'auto_ptr').first()
+            domain_obj = db.session.execute(
+                select(Domain).where(Domain.name == domain_name)
+            ).scalar_one_or_none()
+            domain_setting = db.session.execute(
+                select(DomainSetting).where(
+                    DomainSetting.domain == domain_obj,
+                    DomainSetting.setting == 'auto_ptr',
+                )
+            ).scalar_one_or_none()
             auto_ptr_enabled = strtobool(
                 domain_setting.value) if domain_setting else False
 
@@ -418,7 +399,7 @@ class Record(object):
 
                 if not new_rrsets and not del_rrsets:
                     msg = 'No changes detected. Skipping auto ptr...'
-                    current_app.logger.info(msg)
+                    logger.info(msg)
                     return {'status': 'ok', 'msg': msg}
 
                 new_rrsets = [
@@ -486,10 +467,10 @@ class Record(object):
                     'msg': 'Auto-PTR record was updated successfully'
                 }
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     "Cannot update auto-ptr record changes to zone {0}. Error: {1}"
                     .format(domain_name, e))
-                current_app.logger.debug(traceback.format_exc())
+                logger.debug(traceback.format_exc())
                 return {
                     'status':
                     'error',
@@ -501,7 +482,6 @@ class Record(object):
         """
         Delete a record from zone
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
         data = {
             "rrsets": [{
                 "name": self.name.rstrip('.') + '.',
@@ -511,19 +491,12 @@ class Record(object):
             }]
         }
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                '/servers/localhost/zones/{0}'.format(domain)),
-                                     headers=headers,
-                                     timeout=int(
-                                         Setting().get('pdns_api_timeout')),
-                                     method='PATCH',
-                                     verify=Setting().get('verify_ssl_connections'),
-                                     data=data)
-            current_app.logger.debug(jdata)
+            client = PowerDNSClient()
+            jdata = client.patch_zone_rrsets(domain, data)
+            logger.debug(jdata)
             return {'status': 'ok', 'msg': 'Record was removed successfully'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Cannot remove record {0}/{1}/{2} from zone {3}. DETAIL: {4}"
                 .format(self.name, self.type, self.data, domain, e))
             return {
@@ -563,8 +536,6 @@ class Record(object):
         """
         Update single record
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
         data = {
             "rrsets": [{
                 "name":
@@ -583,18 +554,12 @@ class Record(object):
         }
 
         try:
-            utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                '/servers/localhost/zones/{0}'.format(domain)),
-                             headers=headers,
-                             timeout=int(Setting().get('pdns_api_timeout')),
-                             method='PATCH',
-                             verify=Setting().get('verify_ssl_connections'),
-                             data=data)
-            current_app.logger.debug("dyndns data: {0}".format(data))
+            client = PowerDNSClient()
+            client.patch_zone_rrsets(domain, data)
+            logger.debug("dyndns data: {0}".format(data))
             return {'status': 'ok', 'msg': 'Record was updated successfully'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Cannot add record {0}/{1}/{2} to zone {3}. DETAIL: {4}".
                 format(self.name, self.type, self.data, domain, e))
             return {
@@ -604,18 +569,13 @@ class Record(object):
             }
 
     def update_db_serial(self, domain):
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-        jdata = utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-            '/servers/localhost/zones/{0}'.format(domain)),
-                                 headers=headers,
-                                 timeout=int(
-                                     Setting().get('pdns_api_timeout')),
-                                 method='GET',
-                                 verify=Setting().get('verify_ssl_connections'))
+        client = PowerDNSClient()
+        jdata = client.get_zone(domain)
         serial = jdata['serial']
 
-        domain = Domain.query.filter(Domain.name == domain).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain)
+        ).scalar_one_or_none()
         if domain:
             domain.serial = serial
             db.session.commit()

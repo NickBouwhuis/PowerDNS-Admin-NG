@@ -36,7 +36,7 @@ def create_self_signed_cert():
         x509.NameAttribute(NameOID.LOCALITY_NAME, "Dortmund"),
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Dummy Company Ltd"),
         x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "Dummy Company Ltd"),
-        x509.NameAttribute(NameOID.COMMON_NAME, "PowerDNS-Admin"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "PowerDNS-AdminNG"),
     ])
 
     cert = x509.CertificateBuilder().subject_name(

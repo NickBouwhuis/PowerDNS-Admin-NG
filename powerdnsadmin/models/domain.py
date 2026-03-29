@@ -1,12 +1,11 @@
 import json
 import re
 import traceback
-from flask import current_app
-from flask_login import current_user
-from urllib.parse import urljoin
+import logging
 from distutils.util import strtobool
+from sqlalchemy import select, delete, or_
 
-from ..lib import utils
+from ..services.pdns_client import PowerDNSClient
 from .base import db, domain_apikey
 from .setting import Setting
 from .user import User
@@ -16,8 +15,11 @@ from .domain_user import DomainUser
 from .domain_setting import DomainSetting
 from .history import History
 
+logger = logging.getLogger(__name__)
+
 
 class Domain(db.Model):
+    __tablename__ = 'domain'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), index=True, unique=True)
     master = db.Column(db.String(128))
@@ -52,11 +54,6 @@ class Domain(db.Model):
         self.last_check = last_check
         self.dnssec = dnssec
         self.account_id = account_id
-        # PDNS configs
-        self.PDNS_STATS_URL = Setting().get('pdns_api_url')
-        self.PDNS_API_KEY = Setting().get('pdns_api_key')
-        self.PDNS_VERSION = Setting().get('pdns_version')
-        self.API_EXTENDED_URL = utils.pdns_api_extended_uri(self.PDNS_VERSION)
 
     def __repr__(self):
         return '<Domain {0}>'.format(self.name)
@@ -67,7 +64,7 @@ class Domain(db.Model):
             db.session.commit()
             return True
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Can not create setting {0} for zone {1}. {2}'.format(
                     setting, self.name, e))
             return False
@@ -76,38 +73,27 @@ class Domain(db.Model):
         """
         Get all zones which has in PowerDNS
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-        jdata = utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                 '/servers/localhost/zones/{0}'.format(domain_name)),
-            headers=headers,
-            timeout=int(
-                Setting().get('pdns_api_timeout')),
-            verify=Setting().get('verify_ssl_connections'))
-        return jdata
+        client = PowerDNSClient()
+        return client.get_zone(domain_name)
 
     def get_domains(self):
         """
         Get all zones which has in PowerDNS
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-        jdata = utils.fetch_json(
-            urljoin(self.PDNS_STATS_URL,
-                    self.API_EXTENDED_URL + '/servers/localhost/zones'),
-            headers=headers,
-            timeout=int(Setting().get('pdns_api_timeout')),
-            verify=Setting().get('verify_ssl_connections'))
-        return jdata
+        client = PowerDNSClient()
+        return client.list_zones()
 
     def get_id_by_name(self, name):
         """
         Return domain id
         """
         try:
-            domain = Domain.query.filter(Domain.name == name).first()
+            domain = db.session.execute(
+                select(Domain).where(Domain.name == name)
+            ).scalar_one_or_none()
             return domain.id
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Zone does not exist. ERROR: {0}'.format(e))
             return None
 
@@ -131,21 +117,16 @@ class Domain(db.Model):
         """
         Fetch zones (zones) from PowerDNS and update into DB
         """
-        db_domain = Domain.query.all()
+        db_domain = db.session.execute(select(Domain)).scalars().all()
         list_db_domain = [d.name for d in db_domain]
         dict_db_domain = dict((x.name, x) for x in db_domain)
-        current_app.logger.info("Found {} zones in PowerDNS-Admin".format(
+        logger.info("Found {} zones in PowerDNS-AdminNG".format(
             len(list_db_domain)))
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         try:
-            jdata = utils.fetch_json(
-                urljoin(self.PDNS_STATS_URL,
-                        self.API_EXTENDED_URL + '/servers/localhost/zones'),
-                headers=headers,
-                timeout=int(Setting().get('pdns_api_timeout')),
-                verify=Setting().get('verify_ssl_connections'))
+            client = PowerDNSClient()
+            jdata = client.list_zones()
             list_jdomain = [d['name'].rstrip('.') for d in jdata]
-            current_app.logger.info(
+            logger.info(
                 "Found {} zones in PowerDNS server".format(len(list_jdomain)))
 
             try:
@@ -155,9 +136,9 @@ class Domain(db.Model):
                 for domain_name in should_removed_db_domain:
                     self.delete_domain_from_pdnsadmin(domain_name, do_commit=False)
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Can not delete zone from DB. DETAIL: {0}'.format(e))
-                current_app.logger.debug(traceback.format_exc())
+                logger.debug(traceback.format_exc())
 
             # update/add new zone
             account_cache = {}
@@ -175,7 +156,7 @@ class Domain(db.Model):
                             account_cache[data['account']] = find_account_id
                     account_id = find_account_id
                 else:
-                    current_app.logger.debug(
+                    logger.debug(
                         "No 'account' data found in API result - Unsupported PowerDNS version?"
                     )
                     account_id = None
@@ -187,14 +168,14 @@ class Domain(db.Model):
                     self.add_domain_to_powerdns_admin(domain=data, do_commit=False)
 
             db.session.commit()
-            current_app.logger.info('Update zone finished')
+            logger.info('Update zone finished')
             return {
                 'status': 'ok',
                 'msg': 'Zone table has been updated successfully'
             }
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot update zone table. Error: {0}'.format(e))
             return {'status': 'error', 'msg': 'Cannot update zone table'}
 
@@ -218,11 +199,11 @@ class Domain(db.Model):
             try:
                 if do_commit:
                     db.session.commit()
-                current_app.logger.info("Updated PDNS-Admin zone {0}".format(
+                logger.info("Updated PDNS-Admin zone {0}".format(
                     domain.name))
             except Exception as e:
                 db.session.rollback()
-                current_app.logger.info("Rolled back zone {0} {1}".format(
+                logger.info("Rolled back zone {0} {1}".format(
                     domain.name, e))
                 raise
 
@@ -236,77 +217,57 @@ class Domain(db.Model):
         """
         Add a zone to power dns
         """
-
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
-        domain_name = domain_name + '.'
-        domain_ns = [ns + '.' for ns in domain_ns]
-
-        if soa_edit_api not in ["DEFAULT", "INCREASE", "EPOCH", "OFF"]:
-            soa_edit_api = 'DEFAULT'
-
-        elif soa_edit_api == 'OFF':
-            soa_edit_api = ''
-
-        post_data = {
-            "name": domain_name,
-            "kind": domain_type,
-            "masters": domain_master_ips,
-            "nameservers": domain_ns,
-            "soa_edit_api": soa_edit_api,
-            "account": account_name
-        }
-
         try:
-            jdata = utils.fetch_json(
-                urljoin(self.PDNS_STATS_URL,
-                        self.API_EXTENDED_URL + '/servers/localhost/zones'),
-                headers=headers,
-                timeout=int(Setting().get('pdns_api_timeout')),
-                method='POST',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.create_zone(
+                name=domain_name,
+                kind=domain_type,
+                nameservers=domain_ns,
+                masters=domain_master_ips,
+                soa_edit_api=soa_edit_api,
+                account=account_name,
+            )
             if 'error' in jdata.keys():
-                current_app.logger.error(jdata['error'])
+                logger.error(jdata['error'])
                 if jdata.get('http_code') == 409:
                     return {'status': 'error', 'msg': 'Zone already exists'}
                 return {'status': 'error', 'msg': jdata['error']}
             else:
-                current_app.logger.info(
+                logger.info(
                     'Added zone successfully to PowerDNS: {0}'.format(
                         domain_name))
-                self.add_domain_to_powerdns_admin(domain_dict=post_data)
+                self.add_domain_to_powerdns_admin(domain_dict={
+                    "name": domain_name + '.' if not domain_name.endswith('.') else domain_name,
+                    "kind": domain_type,
+                    "masters": domain_master_ips,
+                    "nameservers": domain_ns,
+                    "soa_edit_api": soa_edit_api,
+                    "account": account_name,
+                })
                 return {'status': 'ok', 'msg': 'Added zone successfully'}
         except Exception as e:
-            current_app.logger.error('Cannot add zone {0} {1}'.format(
+            logger.error('Cannot add zone {0} {1}'.format(
                 domain_name, e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
             return {'status': 'error', 'msg': 'Cannot add this zone.'}
 
     def add_domain_to_powerdns_admin(self, domain=None, domain_dict=None, do_commit=True):
         """
         Read zone from PowerDNS and add into PDNS-Admin
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
         if not domain:
             try:
-                domain = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(
-                                                 domain_dict['name'])),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    verify=Setting().get('verify_ssl_connections'))
+                client = PowerDNSClient()
+                domain = client.get_zone(domain_dict['name'])
             except Exception as e:
-                current_app.logger.error('Can not read zone from PDNS')
-                current_app.logger.error(e)
-                current_app.logger.debug(traceback.format_exc())
+                logger.error('Can not read zone from PDNS')
+                logger.error(e)
+                logger.debug(traceback.format_exc())
 
         if 'account' in domain:
             account_id = Account().get_id_by_name(domain['account'])
         else:
-            current_app.logger.debug(
+            logger.debug(
                 "No 'account' data found in API result - Unsupported PowerDNS version?"
             )
             account_id = None
@@ -324,47 +285,39 @@ class Domain(db.Model):
         try:
             if do_commit:
                 db.session.commit()
-            current_app.logger.info(
+            logger.info(
                 "Synced PowerDNS zone to PDNS-Admin: {0}".format(d.name))
             return {
                 'status': 'ok',
-                'msg': 'Added zone successfully to PowerDNS-Admin'
+                'msg': 'Added zone successfully to PowerDNS-AdminNG'
             }
         except Exception as e:
             db.session.rollback()
-            current_app.logger.info("Rolled back zone {0}".format(d.name))
+            logger.info("Rolled back zone {0}".format(d.name))
             raise
 
     def update_soa_setting(self, domain_name, soa_edit_api):
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
             return {'status': 'error', 'msg': 'Zone does not exist.'}
 
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
-
         if soa_edit_api not in ["DEFAULT", "INCREASE", "EPOCH", "OFF"]:
             soa_edit_api = 'DEFAULT'
-
         elif soa_edit_api == 'OFF':
             soa_edit_api = ''
 
         post_data = {"soa_edit_api": soa_edit_api, "kind": domain.type}
 
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain.name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain.name, post_data)
             if 'error' in jdata.keys():
-                current_app.logger.error(jdata['error'])
+                logger.error(jdata['error'])
                 return {'status': 'error', 'msg': jdata['error']}
             else:
-                current_app.logger.info(
+                logger.info(
                     'soa-edit-api changed for zone {0} successfully'.format(
                         domain_name))
                 return {
@@ -372,9 +325,9 @@ class Domain(db.Model):
                     'msg': 'soa-edit-api changed successfully'
                 }
         except Exception as e:
-            current_app.logger.debug(e)
-            current_app.logger.debug(traceback.format_exc())
-            current_app.logger.error(
+            logger.debug(e)
+            logger.debug(traceback.format_exc())
+            logger.error(
                 'Cannot change soa-edit-api for zone {0}'.format(
                     domain_name))
             return {
@@ -386,29 +339,22 @@ class Domain(db.Model):
         """
         Update zone kind: Native / Master / Slave
         """
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
-            return {'status': 'error', 'msg': 'Znoe does not exist.'}
-
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
+            return {'status': 'error', 'msg': 'Zone does not exist.'}
 
         post_data = {"kind": kind, "masters": masters}
 
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain.name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain.name, post_data)
             if 'error' in jdata.keys():
-                current_app.logger.error(jdata['error'])
+                logger.error(jdata['error'])
                 return {'status': 'error', 'msg': jdata['error']}
             else:
-                current_app.logger.info(
+                logger.info(
                     'Update zone kind for {0} successfully'.format(
                         domain_name))
                 return {
@@ -416,10 +362,10 @@ class Domain(db.Model):
                     'msg': 'Zone kind changed successfully'
                 }
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Cannot update kind for zone {0}. Error: {1}'.format(
                     domain_name, e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
 
             return {
                 'status': 'error',
@@ -431,10 +377,15 @@ class Domain(db.Model):
         Check the existing reverse lookup zone,
         if not exists create a new one automatically
         """
-        domain_obj = Domain.query.filter(Domain.name == domain_name).first()
-        domain_auto_ptr = DomainSetting.query.filter(
-            DomainSetting.domain == domain_obj).filter(
-            DomainSetting.setting == 'auto_ptr').first()
+        domain_obj = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
+        domain_auto_ptr = db.session.execute(
+            select(DomainSetting).where(
+                DomainSetting.domain == domain_obj,
+                DomainSetting.setting == 'auto_ptr',
+            )
+        ).scalar_one_or_none()
         domain_auto_ptr = strtobool(
             domain_auto_ptr.value) if domain_auto_ptr else False
         system_auto_ptr = Setting().get('auto_ptr')
@@ -511,56 +462,49 @@ class Domain(db.Model):
             self.delete_domain_from_pdnsadmin(domain_name)
             return {'status': 'ok', 'msg': 'Delete zone successfully'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Cannot delete zone {0}'.format(domain_name))
-            current_app.logger.error(e)
-            current_app.logger.debug(traceback.format_exc())
+            logger.error(e)
+            logger.debug(traceback.format_exc())
             return {'status': 'error', 'msg': 'Cannot delete zone'}
 
     def delete_domain_from_powerdns(self, domain_name):
         """
         Delete a single zone name from powerdns
         """
-        headers = {'X-API-Key': self.PDNS_API_KEY}
-
-        utils.fetch_json(urljoin(
-            self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                 '/servers/localhost/zones/{0}'.format(domain_name)),
-            headers=headers,
-            timeout=int(Setting().get('pdns_api_timeout')),
-            method='DELETE',
-            verify=Setting().get('verify_ssl_connections'))
-        current_app.logger.info(
+        client = PowerDNSClient()
+        client.delete_zone(domain_name)
+        logger.info(
             'Deleted zone successfully from PowerDNS: {0}'.format(
                 domain_name))
         return {'status': 'ok', 'msg': 'Delete zone successfully'}
 
     def delete_domain_from_pdnsadmin(self, domain_name, do_commit=True):
         # Revoke permission before deleting zone
-        domain = Domain.query.filter(Domain.name == domain_name).first()
-        domain_user = DomainUser.query.filter(
-            DomainUser.domain_id == domain.id)
-        if domain_user:
-            domain_user.delete()
-        domain_setting = DomainSetting.query.filter(
-            DomainSetting.domain_id == domain.id)
-        if domain_setting:
-            domain_setting.delete()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
+        db.session.execute(
+            delete(DomainUser).where(DomainUser.domain_id == domain.id)
+        )
+        db.session.execute(
+            delete(DomainSetting).where(DomainSetting.domain_id == domain.id)
+        )
         domain.apikeys[:] = []
 
         # Remove history for zone
         if not Setting().get('preserve_history'):
-            domain_history = History.query.filter(
-                History.domain_id == domain.id
+            db.session.execute(
+                delete(History).where(History.domain_id == domain.id)
             )
-            if domain_history:
-                domain_history.delete()
 
         # then remove zone
-        Domain.query.filter(Domain.name == domain_name).delete()
+        db.session.execute(
+            delete(Domain).where(Domain.name == domain_name)
+        )
         if do_commit:
             db.session.commit()
-        current_app.logger.info(
+        logger.info(
             "Deleted zone successfully from pdnsADMIN: {}".format(
                 domain_name))
 
@@ -569,10 +513,13 @@ class Domain(db.Model):
         Get users (id) who have access to this zone name
         """
         user_ids = []
-        query = db.session.query(
-            DomainUser, Domain).filter(User.id == DomainUser.user_id).filter(
-            Domain.id == DomainUser.domain_id).filter(
-            Domain.name == self.name).all()
+        query = db.session.execute(
+            select(DomainUser, Domain).where(
+                User.id == DomainUser.user_id,
+                Domain.id == DomainUser.domain_id,
+                Domain.name == self.name,
+            )
+        ).all()
         for q in query:
             user_ids.append(q[0].user_id)
         return user_ids
@@ -590,15 +537,19 @@ class Domain(db.Model):
 
         try:
             for uid in removed_ids:
-                DomainUser.query.filter(DomainUser.user_id == uid).filter(
-                    DomainUser.domain_id == domain_id).delete()
+                db.session.execute(
+                    delete(DomainUser).where(
+                        DomainUser.user_id == uid,
+                        DomainUser.domain_id == domain_id,
+                    )
+                )
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot revoke user privileges on zone {0}. DETAIL: {1}'.
                     format(self.name, e))
-            current_app.logger.debug(print(traceback.format_exc()))
+            logger.debug(traceback.format_exc())
 
         try:
             for uid in added_ids:
@@ -607,10 +558,10 @@ class Domain(db.Model):
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot grant user privileges to zone {0}. DETAIL: {1}'.
                     format(self.name, e))
-            current_app.logger.debug(print(traceback.format_exc()))
+            logger.debug(traceback.format_exc())
 
     def revoke_privileges_by_id(self, user_id):
         """
@@ -634,7 +585,7 @@ class Domain(db.Model):
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot add user privileges on zone {0}. DETAIL: {1}'.
                 format(self.name, e))
             return False
@@ -643,24 +594,16 @@ class Domain(db.Model):
         """
         Update records from Master DNS server
         """
-        import urllib.parse
-
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY}
             try:
-                r = utils.fetch_json(urljoin(
-                    self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                         '/servers/localhost/zones/{0}/axfr-retrieve'.format(
-                                             urllib.parse.quote_plus(domain.name))),
-                    headers=headers,
-                    timeout=int(
-                        Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'))
+                client = PowerDNSClient()
+                r = client.axfr_retrieve(domain.name)
                 return {'status': 'ok', 'msg': r.get('result')}
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Cannot update from master. DETAIL: {0}'.format(e))
                 return {
                     'status':
@@ -675,22 +618,14 @@ class Domain(db.Model):
         """
         Get zone DNSSEC information
         """
-        import urllib.parse
-
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY}
             try:
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys'.format(
-                                                 urllib.parse.quote_plus(domain.name))),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='GET',
-                    verify=Setting().get('verify_ssl_connections'))
-                if 'error' in jdata:
+                client = PowerDNSClient()
+                jdata = client.get_cryptokeys(domain.name)
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg': 'DNSSEC is not enabled for this zone'
@@ -698,7 +633,7 @@ class Domain(db.Model):
                 else:
                     return {'status': 'ok', 'dnssec': jdata}
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Cannot get zone dnssec. DETAIL: {0}'.format(e))
                 return {
                     'status':
@@ -713,26 +648,16 @@ class Domain(db.Model):
         """
         Enable zone DNSSEC
         """
-        import urllib.parse
-
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
             try:
+                client = PowerDNSClient()
+
                 # Enable API-RECTIFY for domain, BEFORE activating DNSSEC
-                post_data = {"api_rectify": True}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(
-                                                 urllib.parse.quote_plus(domain.name)
-                                             )),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.update_zone(domain.name, {"api_rectify": True})
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg':
@@ -741,19 +666,8 @@ class Domain(db.Model):
                     }
 
                 # Activate DNSSEC
-                post_data = {"keytype": "ksk", "active": True}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys'.format(
-                                                 urllib.parse.quote_plus(domain.name)
-                                             )),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='POST',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.create_cryptokey(domain.name, keytype='ksk', active=True)
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status':
                             'error',
@@ -767,9 +681,9 @@ class Domain(db.Model):
                 return {'status': 'ok'}
 
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Cannot enable dns sec. DETAIL: {}'.format(e))
-                current_app.logger.debug(traceback.format_exc())
+                logger.debug(traceback.format_exc())
                 return {
                     'status':
                         'error',
@@ -784,22 +698,15 @@ class Domain(db.Model):
         """
         Remove keys DNSSEC
         """
-        import urllib.parse
-
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if domain:
-            headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
             try:
+                client = PowerDNSClient()
+
                 # Deactivate DNSSEC
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}/cryptokeys/{1}'.format(
-                                                 urllib.parse.quote_plus(domain.name), key_id)),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='DELETE',
-                    verify=Setting().get('verify_ssl_connections'))
+                jdata = client.delete_cryptokey(domain.name, key_id)
                 if jdata != True:
                     return {
                         'status':
@@ -812,17 +719,8 @@ class Domain(db.Model):
                     }
 
                 # Disable API-RECTIFY for zone, AFTER deactivating DNSSEC
-                post_data = {"api_rectify": False}
-                jdata = utils.fetch_json(
-                    urljoin(
-                        self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                             '/servers/localhost/zones/{0}'.format(domain.name)),
-                    headers=headers,
-                    timeout=int(Setting().get('pdns_api_timeout')),
-                    method='PUT',
-                    verify=Setting().get('verify_ssl_connections'),
-                    data=post_data)
-                if 'error' in jdata:
+                jdata = client.update_zone(domain.name, {"api_rectify": False})
+                if isinstance(jdata, dict) and 'error' in jdata:
                     return {
                         'status': 'error',
                         'msg':
@@ -833,9 +731,9 @@ class Domain(db.Model):
                 return {'status': 'ok'}
 
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Cannot delete dnssec key. DETAIL: {0}'.format(e))
-                current_app.logger.debug(traceback.format_exc())
+                logger.debug(traceback.format_exc())
                 return {
                     'status': 'error',
                     'msg':
@@ -847,7 +745,7 @@ class Domain(db.Model):
         else:
             return {'status': 'error', 'msg': 'This zone does not exist'}
 
-    def assoc_account(self, account_id, update=True):
+    def assoc_account(self, account_id, update=True, created_by=None):
         """
         Associate account with a zone, specified by account id
         """
@@ -858,50 +756,41 @@ class Domain(db.Model):
             return {'status': False, 'msg': 'No zone name specified'}
 
         # read domain and check that it exists
-        domain = Domain.query.filter(Domain.name == domain_name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == domain_name)
+        ).scalar_one_or_none()
         if not domain:
             return {'status': False, 'msg': 'Zone does not exist'}
-
-        headers = {'X-API-Key': self.PDNS_API_KEY, 'Content-Type': 'application/json'}
 
         account_name_old = Account().get_name_by_id(domain.account_id)
         account_name = Account().get_name_by_id(account_id)
 
-        post_data = {"account": account_name}
-
         try:
-            jdata = utils.fetch_json(urljoin(
-                self.PDNS_STATS_URL, self.API_EXTENDED_URL +
-                                     '/servers/localhost/zones/{0}'.format(domain_name)),
-                headers=headers,
-                timeout=int(
-                    Setting().get('pdns_api_timeout')),
-                method='PUT',
-                verify=Setting().get('verify_ssl_connections'),
-                data=post_data)
+            client = PowerDNSClient()
+            jdata = client.update_zone(domain_name, {"account": account_name})
 
             if 'error' in jdata.keys():
-                current_app.logger.error(jdata['error'])
+                logger.error(jdata['error'])
                 return {'status': 'error', 'msg': jdata['error']}
             else:
                 if update:
                     self.update()
                 msg_str = 'Account changed for zone {0} successfully'
-                current_app.logger.info(msg_str.format(domain_name))
+                logger.info(msg_str.format(domain_name))
                 history = History(msg='Update zone {0} associate account {1}'.format(domain.name, 'none' if account_name == '' else account_name),
                               detail = json.dumps({
                                     'assoc_account': 'None' if account_name == '' else account_name,
                                     'dissoc_account': 'None' if account_name_old == '' else account_name_old
                                 }),
-                              created_by=current_user.username)
+                              created_by=created_by or 'system')
                 history.add()
                 return {'status': 'ok', 'msg': 'account changed successfully'}
 
         except Exception as e:
-            current_app.logger.debug(e)
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(e)
+            logger.debug(traceback.format_exc())
             msg_str = 'Cannot change account for zone {0}'
-            current_app.logger.error(msg_str.format(domain_name))
+            logger.error(msg_str.format(domain_name))
             return {
                 'status': 'error',
                 'msg': 'Cannot change account for this zone.'
@@ -911,7 +800,9 @@ class Domain(db.Model):
         """
         Get current account associated with this zone
         """
-        domain = Domain.query.filter(Domain.name == self.name).first()
+        domain = db.session.execute(
+            select(Domain).where(Domain.name == self.name)
+        ).scalar_one_or_none()
 
         return domain.account
 
@@ -920,15 +811,19 @@ class Domain(db.Model):
         Check if the user is allowed to access this
         zone name
         """
-        return db.session.query(Domain) \
-            .outerjoin(DomainUser, Domain.id == DomainUser.domain_id) \
-            .outerjoin(Account, Domain.account_id == Account.id) \
-            .outerjoin(AccountUser, Account.id == AccountUser.account_id) \
-            .filter(
-            db.or_(
-                DomainUser.user_id == user_id,
-                AccountUser.user_id == user_id
-            )).filter(Domain.id == self.id).first()
+        return db.session.execute(
+            select(Domain)
+            .outerjoin(DomainUser, Domain.id == DomainUser.domain_id)
+            .outerjoin(Account, Domain.account_id == Account.id)
+            .outerjoin(AccountUser, Account.id == AccountUser.account_id)
+            .where(
+                or_(
+                    DomainUser.user_id == user_id,
+                    AccountUser.user_id == user_id,
+                ),
+                Domain.id == self.id,
+            )
+        ).scalar_one_or_none()
 
     # Return None if this zone does not exist as record, 
     # Return the parent zone that hold the record if exist
@@ -940,7 +835,7 @@ class Domain(db.Model):
                     if 'rrsets' in upper_domain:
                         for r in upper_domain['rrsets']:
                             if domain_name.rstrip('.') in r['name'].rstrip('.'):
-                                current_app.logger.error('Zone already exists as a record: {} under zone: {}'.format(r['name'].rstrip('.'), upper_domain_name))
+                                logger.error('Zone already exists as a record: {} under zone: {}'.format(r['name'].rstrip('.'), upper_domain_name))
                                 return upper_domain_name
             upper_domain_name = '.'.join(upper_domain_name.split('.')[1:])
         return None

@@ -1,13 +1,40 @@
+import logging
 import sys
 import traceback
 import pytimeparse
 from ast import literal_eval
-from flask import current_app
+from contextvars import ContextVar
+from sqlalchemy import select, delete
 from .base import db
 from powerdnsadmin.lib.settings import AppSettings
 
+logger = logging.getLogger(__name__)
+
+# Per-request settings cache using contextvars (works with both Flask and FastAPI)
+_settings_cache_var: ContextVar[dict | None] = ContextVar('_settings_cache', default=None)
+
+
+def _get_settings_cache():
+    """Get or create the per-request settings cache."""
+    cache = _settings_cache_var.get(None)
+    if cache is None:
+        cache = {}
+        _settings_cache_var.set(cache)
+    return cache
+
+
+def _invalidate_settings_cache(setting_name=None):
+    """Invalidate the per-request settings cache (single key or all)."""
+    cache = _settings_cache_var.get(None)
+    if cache is not None:
+        if setting_name:
+            cache.pop(setting_name, None)
+        else:
+            cache.clear()
+
 
 class Setting(db.Model):
+    __tablename__ = 'setting'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(64), unique=True, index=True)
     value = db.Column(db.Text())
@@ -27,8 +54,9 @@ class Setting(db.Model):
         self.value = value
 
     def set_maintenance(self, mode):
-        maintenance = Setting.query.filter(
-            Setting.name == 'maintenance').first()
+        maintenance = db.session.execute(
+            select(Setting).where(Setting.name == 'maintenance')
+        ).scalar_one_or_none()
 
         if maintenance is None:
             value = AppSettings.defaults['maintenance']
@@ -41,16 +69,19 @@ class Setting(db.Model):
             if maintenance.value != mode:
                 maintenance.value = mode
                 db.session.commit()
+            _invalidate_settings_cache('maintenance')
             return True
         except Exception as e:
-            current_app.logger.error('Cannot set maintenance to {0}. DETAIL: {1}'.format(
+            logger.error('Cannot set maintenance to {0}. DETAIL: {1}'.format(
                 mode, e))
-            current_app.logger.debug(traceback.format_exec())
+            logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
     def toggle(self, setting):
-        current_setting = Setting.query.filter(Setting.name == setting).first()
+        current_setting = db.session.execute(
+            select(Setting).where(Setting.name == setting)
+        ).scalar_one_or_none()
 
         if current_setting is None:
             value = AppSettings.defaults[setting]
@@ -63,17 +94,20 @@ class Setting(db.Model):
             else:
                 current_setting.value = "True"
             db.session.commit()
+            _invalidate_settings_cache(setting)
             return True
         except Exception as e:
-            current_app.logger.error('Cannot toggle setting {0}. DETAIL: {1}'.format(
+            logger.error('Cannot toggle setting {0}. DETAIL: {1}'.format(
                 setting, e))
-            current_app.logger.debug(traceback.format_exec())
+            logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
     def set(self, setting, value):
         import json
-        current_setting = Setting.query.filter(Setting.name == setting).first()
+        current_setting = db.session.execute(
+            select(Setting).where(Setting.name == setting)
+        ).scalar_one_or_none()
 
         if current_setting is None:
             current_setting = Setting(name=setting, value=None)
@@ -87,30 +121,42 @@ class Setting(db.Model):
         try:
             current_setting.value = value
             db.session.commit()
+            _invalidate_settings_cache(setting)
             return True
         except Exception as e:
-            current_app.logger.error('Cannot edit setting {0}. DETAIL: {1}'.format(setting, e))
-            current_app.logger.debug(traceback.format_exec())
+            logger.error('Cannot edit setting {0}. DETAIL: {1}'.format(setting, e))
+            logger.debug(traceback.format_exc())
             db.session.rollback()
             return False
 
     def get(self, setting):
-        if setting in AppSettings.defaults:
+        if setting not in AppSettings.defaults:
+            logger.error('Unknown setting queried: {0}'.format(setting))
+            return None
 
-            if setting.upper() in current_app.config:
-                result = current_app.config[setting.upper()]
-            else:
-                result = self.query.filter(Setting.name == setting).first()
+        # Check per-request cache first
+        cache = _get_settings_cache()
+        if setting in cache:
+            return cache[setting]
 
-            if result is not None:
-                if hasattr(result, 'value'):
-                    result = result.value
-
-                return AppSettings.convert_type(setting, result)
-            else:
-                return AppSettings.defaults[setting]
+        from powerdnsadmin.core.config import get_config
+        app_config = get_config()
+        if setting.upper() in app_config:
+            result = app_config[setting.upper()]
         else:
-            current_app.logger.error('Unknown setting queried: {0}'.format(setting))
+            result = db.session.execute(
+                select(Setting).where(Setting.name == setting)
+            ).scalar_one_or_none()
+
+        if result is not None:
+            if hasattr(result, 'value'):
+                result = result.value
+            value = AppSettings.convert_type(setting, result)
+        else:
+            value = AppSettings.defaults[setting]
+
+        cache[setting] = value
+        return value
 
     def get_group(self, group):
         if not isinstance(group, list):

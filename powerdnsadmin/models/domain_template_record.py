@@ -1,6 +1,8 @@
-from flask import current_app
+import logging
 
 from .base import db
+
+logger = logging.getLogger(__name__)
 
 
 class DomainTemplateRecord(db.Model):
@@ -38,7 +40,7 @@ class DomainTemplateRecord(db.Model):
         try:
             db.session.commit()
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Can not update zone template table. Error: {0}'.format(e))
             db.session.rollback()
             return {

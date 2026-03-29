@@ -43,10 +43,9 @@ RUN pip3 install -r requirements.txt
 
 COPY . /app
 
-ENV FLASK_APP=powerdnsadmin/__init__.py
 RUN yarn install --pure-lockfile --production \
     && yarn cache clean \
-    && flask assets build
+    && npm run build
 
 COPY ./docker-test/wait-for-pdns.sh /opt
 RUN chmod u+x /opt/wait-for-pdns.sh

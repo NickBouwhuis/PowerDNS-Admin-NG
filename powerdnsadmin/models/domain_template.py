@@ -1,5 +1,8 @@
-from flask import current_app
+import logging
+
 from .base import db
+
+logger = logging.getLogger(__name__)
 
 
 class DomainTemplate(db.Model):
@@ -30,7 +33,7 @@ class DomainTemplate(db.Model):
                 'msg': 'Template records have been modified'
             }
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Cannot create template records Error: {0}'.format(e))
             db.session.rollback()
             return {
@@ -44,7 +47,7 @@ class DomainTemplate(db.Model):
             db.session.commit()
             return {'status': 'ok', 'msg': 'Template has been created'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Can not update zone template table. Error: {0}'.format(e))
             db.session.rollback()
             return {
@@ -59,7 +62,7 @@ class DomainTemplate(db.Model):
             db.session.commit()
             return {'status': 'ok', 'msg': 'Template has been deleted'}
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 'Can not delete zone template. Error: {0}'.format(e))
             db.session.rollback()
             return {'status': 'error', 'msg': 'Can not delete zone template'}

@@ -2,10 +2,10 @@ version: "3"
 
 services:
   app:
-    image: powerdnsadmin/pda-legacy:latest
-    container_name: powerdns_admin
+    image: powerdnsadmin/powerdns-adminng:latest
+    container_name: powerdns_adminng
     ports:
-      - "9191:80"
+      - "9191:3000"
     logging:
       driver: json-file
       options:

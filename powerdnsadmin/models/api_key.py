@@ -1,12 +1,16 @@
+import logging
 import secrets
 import string
+
 import bcrypt
-from flask import current_app
+from sqlalchemy import select
 
 from .base import db
 from ..models.role import Role
 from ..models.domain import Domain
 from ..models.account import Account
+
+logger = logging.getLogger(__name__)
 
 class ApiKey(db.Model):
     __tablename__ = "apikey"
@@ -34,17 +38,19 @@ class ApiKey(db.Model):
                 for _ in range(15))
             self.plain_key = rand_key
             self.key = self.get_hashed_password(rand_key).decode('utf-8')
-            current_app.logger.debug("Hashed key: {0}".format(self.key))
+            logger.debug("Hashed key: {0}".format(self.key))
         else:
             self.key = key
 
     def create(self):
         try:
-            self.role = Role.query.filter(Role.name == self.role_name).first()
+            self.role = db.session.execute(
+                select(Role).where(Role.name == self.role_name)
+            ).scalar_one_or_none()
             db.session.add(self)
             db.session.commit()
         except Exception as e:
-            current_app.logger.error('Can not update api key table. Error: {0}'.format(e))
+            logger.error('Can not update api key table. Error: {0}'.format(e))
             db.session.rollback()
             raise e
 
@@ -54,35 +60,37 @@ class ApiKey(db.Model):
             db.session.commit()
         except Exception as e:
             msg_str = 'Can not delete api key template. Error: {0}'
-            current_app.logger.error(msg_str.format(e))
+            logger.error(msg_str.format(e))
             db.session.rollback()
             raise e
 
     def update(self, role_name=None, description=None, domains=None, accounts=None):
         try:
           if role_name:
-              role = Role.query.filter(Role.name == role_name).first()
+              role = db.session.execute(
+                  select(Role).where(Role.name == role_name)
+              ).scalar_one_or_none()
               self.role_id = role.id
 
           if description:
               self.description = description
 
           if domains is not None:
-              domain_object_list = Domain.query \
-                                       .filter(Domain.name.in_(domains)) \
-                                       .all()
+              domain_object_list = db.session.execute(
+                  select(Domain).where(Domain.name.in_(domains))
+              ).scalars().all()
               self.domains[:] = domain_object_list
 
           if accounts is not None:
-              account_object_list = Account.query \
-                                       .filter(Account.name.in_(accounts)) \
-                                       .all()
+              account_object_list = db.session.execute(
+                  select(Account).where(Account.name.in_(accounts))
+              ).scalars().all()
               self.accounts[:] = account_object_list
 
           db.session.commit()
         except Exception as e:
           msg_str = 'Update of apikey failed. Error: {0}'
-          current_app.logger.error(msg_str.format(e))
+          logger.error(msg_str.format(e))
           db.session.rollback()  # fixed line
           raise e
 
@@ -106,8 +114,9 @@ class ApiKey(db.Model):
         # cryptographically secure fashion, as this then makes
         # expendable as an exception the otherwise vital protection of
         # proper salting as provided by bcrypt.gensalt().
+        from powerdnsadmin.core.config import get_config
         return bcrypt.hashpw(pw.encode('utf-8'),
-                             current_app.config.get('SALT').encode('utf-8'))
+                             get_config()['SALT'].encode('utf-8'))
 
     def check_password(self, hashed_password):
         # Check hashed password. Using bcrypt,
@@ -123,9 +132,9 @@ class ApiKey(db.Model):
         """
         if method == 'LOCAL':
             passw_hash = self.get_hashed_password(self.plain_text_password)
-            apikey = ApiKey.query \
-                           .filter(ApiKey.key == passw_hash.decode('utf-8')) \
-                           .first()
+            apikey = db.session.execute(
+                select(ApiKey).where(ApiKey.key == passw_hash.decode('utf-8'))
+            ).scalar_one_or_none()
 
             if not apikey:
                 raise Exception("Unauthorized")

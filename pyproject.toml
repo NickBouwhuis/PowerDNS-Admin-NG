@@ -1,0 +1,37 @@
+[project]
+name = "powerdns-adminng"
+version = "0.5.0-dev"
+requires-python = ">=3.9"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "S",     # bandit (security)
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "S101",  # use of assert (OK in tests)
+    "S105",  # hardcoded password (too many false positives in config)
+    "S106",  # hardcoded password argument
+    "S107",  # hardcoded password default
+    "B904",  # raise from within except (too many existing instances)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S"]
+"configs/*.py" = ["S"]
+"powerdnsadmin/default_config.py" = ["S"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

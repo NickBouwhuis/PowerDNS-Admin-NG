@@ -2,8 +2,8 @@ import os
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 ### BASIC APP CONFIG
-SALT = '$2b$12$yLUMTIfl21FKJQpTkRQXCu'
-SECRET_KEY = 'e951e5a1f4b94151b360f47edf596dd2'
+SALT = '$2b$12$VhFXsbeArj/K4WMB5eEZQO'
+SECRET_KEY = 'testing_secret_key_not_for_production_use_a1b2c3d4'
 BIND_ADDRESS = '0.0.0.0'
 PORT = 9191
 HSTS_ENABLED = False
