@@ -797,19 +797,19 @@ class TestDbSessionCleanup:
 
     @patch(_DB)
     def test_session_removed_after_normal_request(self, mock_db):
-        """Session is removed after a successful request."""
+        """Session is removed at start (stale cleanup) and after request."""
         gen = deps.db_session_cleanup()
-        next(gen)  # enter the dependency
+        next(gen)  # enter the dependency — removes stale session
         with pytest.raises(StopIteration):
             next(gen)  # exit (finally block runs)
-        mock_db.session.remove.assert_called_once()
+        assert mock_db.session.remove.call_count == 2
 
     @patch(_DB)
     def test_session_rolled_back_and_removed_on_exception(self, mock_db):
         """Session is rolled back and removed when an exception occurs."""
         gen = deps.db_session_cleanup()
-        next(gen)  # enter the dependency
+        next(gen)  # enter the dependency — removes stale session
         with pytest.raises(RuntimeError):
             gen.throw(RuntimeError("DB failure"))
         mock_db.session.rollback.assert_called_once()
-        mock_db.session.remove.assert_called_once()
+        assert mock_db.session.remove.call_count == 2
