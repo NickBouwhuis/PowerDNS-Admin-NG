@@ -56,6 +56,10 @@ RUN mkdir -p /app && \
 # ============================================================================
 FROM alpine:3.17
 
+LABEL org.opencontainers.image.source="https://github.com/NickBouwhuis/PowerDNS-Admin-NG"
+LABEL org.opencontainers.image.description="PowerDNS-Admin NG - Modern DNS management interface"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ENV USER=pda \
     NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
