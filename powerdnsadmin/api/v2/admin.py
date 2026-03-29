@@ -461,12 +461,13 @@ async def create_apikey(request: Request, body: ApiKeyCreateRequest):
             accounts.append(a)
 
     try:
-        key = ApiKey(description=body.description)
-        key.create(
+        key = ApiKey(
+            description=body.description,
             role_name=body.role_name,
             domains=domains,
             accounts=accounts,
         )
+        key.create()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
