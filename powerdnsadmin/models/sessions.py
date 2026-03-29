@@ -1,9 +1,13 @@
-from flask import current_app, session
-from flask_login import current_user
+import logging
+
 from .base import db
+
+logger = logging.getLogger(__name__)
 
 
 class Sessions(db.Model):
+    __tablename__ = 'sessions'
+    __table_args__ = {'extend_existing': True}
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.String(255), index=True, unique=True)
     data = db.Column(db.BLOB)
@@ -38,6 +42,6 @@ class Sessions(db.Model):
             db.session.commit()
         except SQLAlchemyError as e:
             db.session.rollback()
-            current_app.logger.error(e)
+            logger.error(e)
             return False
         return True

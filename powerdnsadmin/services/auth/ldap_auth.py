@@ -9,7 +9,9 @@ from collections import OrderedDict
 
 import ldap
 import ldap.filter
-from flask import current_app
+import logging as _logging
+
+_logger = _logging.getLogger(__name__)
 from sqlalchemy import select, func
 
 from ...models.base import db
@@ -93,9 +95,9 @@ class LDAPAuthService:
             return result_set
 
         except ldap.LDAPError as e:
-            current_app.logger.error(e)
-            current_app.logger.debug('baseDN: {0}'.format(base_dn))
-            current_app.logger.debug(traceback.format_exc())
+            _logger.error(e)
+            _logger.debug('baseDN: {0}'.format(base_dn))
+            _logger.debug(traceback.format_exc())
             return None
 
     def bind(self, ldap_username, password):
@@ -109,7 +111,7 @@ class LDAPAuthService:
             conn.simple_bind_s(ldap_username, password)
             return True
         except ldap.LDAPError as e:
-            current_app.logger.error(e)
+            _logger.error(e)
             return False
 
     # ── Group Role Resolution ─────────────────────────────────────────
@@ -120,33 +122,33 @@ class LDAPAuthService:
         """Resolve role from LDAP group membership (OpenLDAP style)."""
         group_filter = "(&({0}={1}){2})".format(
             filter_groupname, ldap_username, filter_group)
-        current_app.logger.debug(
+        _logger.debug(
             'Ldap groupSearchFilter {0}'.format(group_filter))
 
         if admin_group and self.search(group_filter, admin_group,
                                        username, password):
-            current_app.logger.info(
+            _logger.info(
                 'User {0} is part of the "{1}" group (admin access)'.format(
                     username, admin_group))
             return 'Administrator'
 
         if operator_group and self.search(group_filter, operator_group,
                                           username, password):
-            current_app.logger.info(
+            _logger.info(
                 'User {0} is part of the "{1}" group (operator access)'.format(
                     username, operator_group))
             return 'Operator'
 
         if user_group and self.search(group_filter, user_group,
                                       username, password):
-            current_app.logger.info(
+            _logger.info(
                 'User {0} is part of the "{1}" group (user access)'.format(
                     username, user_group))
             return 'User'
 
-        current_app.logger.error(
+        _logger.error(
             'User {0} is not part of any security groups '
-            'that allow access to PowerDNS-Admin'.format(username))
+            'that allow access to PowerDNS-AdminNG'.format(username))
         return None
 
     def _resolve_role_ad(self, username, password, user_dn, base_dn,
@@ -166,7 +168,7 @@ class LDAPAuthService:
 
         sf_member = f"(member:1.2.840.113556.1.4.1941:={escaped_dn})"
         search_filter = f"(&(|{sf_groups}){sf_member})"
-        current_app.logger.debug(
+        _logger.debug(
             f"LDAP groupSearchFilter '{search_filter}'")
 
         ldap_user_groups = [
@@ -176,18 +178,18 @@ class LDAPAuthService:
         ]
 
         if not ldap_user_groups:
-            current_app.logger.error(
+            _logger.error(
                 f"User '{username}' does not belong to any group "
                 "while LDAP_GROUP_SECURITY_ENABLED is ON")
             return None
 
-        current_app.logger.debug(
+        _logger.debug(
             f"LDAP User security groups for user '{username}': "
             + " ".join(ldap_user_groups))
 
         for role, ldap_group in roles.items():
             if ldap_group and ldap_group in ldap_user_groups:
-                current_app.logger.info(
+                _logger.info(
                     f"User '{username}' member of the '{ldap_group}' group "
                     f"('{role}' access)")
                 return role
@@ -229,7 +231,7 @@ class LDAPAuthService:
             ldap_username = "{0}@{1}".format(
                 username, self._get('ldap_domain'))
             if not self.bind(ldap_username, password):
-                current_app.logger.error(
+                _logger.error(
                     'User "{0}" input a wrong LDAP password. '
                     'Authentication request from {1}'.format(username, src_ip))
                 return False, None
@@ -237,15 +239,15 @@ class LDAPAuthService:
         # Step 2: Search for user in LDAP
         search_filter = "(&({0}={1}){2})".format(
             filter_username, username, filter_basic)
-        current_app.logger.debug(
+        _logger.debug(
             'Ldap searchFilter {0}'.format(search_filter))
 
         ldap_result = self.search(search_filter, base_dn, username, password)
-        current_app.logger.debug(
+        _logger.debug(
             'Ldap search result: {0}'.format(ldap_result))
 
         if not ldap_result:
-            current_app.logger.warning(
+            _logger.warning(
                 'LDAP User "{0}" does not exist. '
                 'Authentication request from {1}'.format(username, src_ip))
             return False, None
@@ -257,7 +259,7 @@ class LDAPAuthService:
             # Step 3: Validate OpenLDAP password (binds with user DN)
             if ldap_type != 'ad' and not trust_user:
                 if not self.bind(ldap_user_dn, password):
-                    current_app.logger.error(
+                    _logger.error(
                         'User "{0}" input a wrong LDAP password. '
                         'Authentication request from {1}'.format(
                             username, src_ip))
@@ -276,24 +278,24 @@ class LDAPAuthService:
                             username, password, ldap_result[0][0][0],
                             base_dn, admin_group, operator_group, user_group)
                     else:
-                        current_app.logger.error('Invalid LDAP type')
+                        _logger.error('Invalid LDAP type')
                         return False, None
 
                     if role_name is None:
                         return False, None
 
                 except Exception as e:
-                    current_app.logger.error(
+                    _logger.error(
                         'LDAP group lookup for user "{0}" has failed. '
                         'Authentication request from {1}'.format(
                             username, src_ip))
-                    current_app.logger.debug(traceback.format_exc())
+                    _logger.debug(traceback.format_exc())
                     return False, None
 
         except Exception as e:
-            current_app.logger.error(
+            _logger.error(
                 'Wrong LDAP configuration. {0}'.format(e))
-            current_app.logger.debug(traceback.format_exc())
+            _logger.debug(traceback.format_exc())
             return False, None
 
         # Step 5: Create user in DB if not exists
@@ -334,9 +336,9 @@ class LDAPAuthService:
                 user.email = ldap_result[0][0][1]['userPrincipalName'][
                     0].decode("utf-8")
         except Exception as e:
-            current_app.logger.warning(
+            _logger.warning(
                 "Reading ldap data threw an exception {0}".format(e))
-            current_app.logger.debug(traceback.format_exc())
+            _logger.debug(traceback.format_exc())
 
         # First user gets Administrator role
         if db.session.execute(
@@ -351,5 +353,5 @@ class LDAPAuthService:
             ).scalar_one().id
 
         user.create_user()
-        current_app.logger.info(
+        _logger.info(
             'Created user "{0}" in the DB'.format(username))

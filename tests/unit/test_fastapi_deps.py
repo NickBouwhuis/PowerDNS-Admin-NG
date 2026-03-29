@@ -2,7 +2,7 @@
 
 Tests powerdnsadmin/api/deps.py -- all auth/authz dependency functions
 used by FastAPI route handlers. Uses unittest.mock throughout to avoid
-any Flask, SQLAlchemy, or external service dependencies.
+any SQLAlchemy or external service dependencies.
 
 Because deps.py uses local (deferred) imports inside function bodies
 (e.g. ``from powerdnsadmin.models.user import User``), we must patch
@@ -21,10 +21,9 @@ from powerdnsadmin.api import deps
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_request(flask_app=None, client_host="127.0.0.1", path_params=None):
+def _make_request(client_host="127.0.0.1", path_params=None):
     """Build a mock FastAPI Request with the attributes deps.py reads."""
     request = MagicMock()
-    request.app.state.flask_app = flask_app or MagicMock()
     request.client.host = client_host
     request.path_params = path_params or {}
     return request
@@ -49,18 +48,6 @@ _SETTING = "powerdnsadmin.models.setting.Setting"
 _APIKEY = "powerdnsadmin.models.api_key.ApiKey"
 _DB = "powerdnsadmin.models.base.db"
 _SELECT = "powerdnsadmin.api.deps.select"  # module-level import on deps
-
-
-# ===========================================================================
-# _get_flask_app
-# ===========================================================================
-
-class TestGetFlaskApp:
-    def test_returns_flask_app_from_state(self):
-        flask_app = MagicMock(name="flask_app")
-        request = _make_request(flask_app=flask_app)
-        result = deps._get_flask_app(request)
-        assert result is flask_app
 
 
 # ===========================================================================
@@ -119,10 +106,7 @@ class TestGetCurrentUser:
         mock_setting_instance.get.return_value = False
         MockSetting.return_value = mock_setting_instance
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("admin", "wrongpass")
 
@@ -145,10 +129,7 @@ class TestGetCurrentUser:
         mock_setting_instance.get.return_value = True  # verify_user_email = True
         MockSetting.return_value = mock_setting_instance
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("admin", "secret")
 
@@ -176,10 +157,7 @@ class TestGetCurrentUser:
         authenticated_user.username = "admin"
         mock_db.session.execute.return_value.scalar_one_or_none.return_value = authenticated_user
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("admin", "password123")
 
@@ -208,10 +186,7 @@ class TestGetCurrentUser:
         authenticated_user = MagicMock()
         mock_db.session.execute.return_value.scalar_one_or_none.return_value = authenticated_user
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("ldapuser", "ldappass")
 
@@ -237,10 +212,7 @@ class TestGetCurrentUser:
 
         mock_db.session.execute.return_value.scalar_one_or_none.return_value = None
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("ghost", "pass")
 
@@ -263,10 +235,7 @@ class TestGetCurrentUser:
         mock_setting_instance.get.return_value = False
         MockSetting.return_value = mock_setting_instance
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("admin", "pass")
 
@@ -274,6 +243,8 @@ class TestGetCurrentUser:
             deps.get_current_user(request, authorization=header)
         assert exc_info.value.status_code == 401
         assert "authentication failed" in exc_info.value.detail.lower()
+        # Session must be rolled back to prevent poisoning the thread-local
+        mock_db.session.rollback.assert_called_once()
 
     @patch(_SELECT)
     @patch(_DB)
@@ -293,10 +264,7 @@ class TestGetCurrentUser:
         authenticated_user = MagicMock()
         mock_db.session.execute.return_value.scalar_one_or_none.return_value = authenticated_user
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         header = _basic_auth_header("admin", "pass:with:colons")
 
@@ -324,10 +292,7 @@ class TestGetCurrentUser:
         authenticated_user = MagicMock()
         mock_db.session.execute.return_value.scalar_one_or_none.return_value = authenticated_user
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app, client_host="10.0.0.42")
+        request = _make_request(client_host="10.0.0.42")
 
         header = _basic_auth_header("admin", "pass")
         deps.get_current_user(request, authorization=header)
@@ -349,10 +314,7 @@ class TestGetCurrentUser:
         mock_setting_instance.get.return_value = False
         MockSetting.return_value = mock_setting_instance
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
         request.client = None
 
         header = _basic_auth_header("admin", "pass")
@@ -391,17 +353,15 @@ class TestGetCurrentApikey:
         assert exc_info.value.status_code == 401
         assert "base64" in exc_info.value.detail.lower()
 
+    @patch(_DB)
     @patch(_APIKEY)
-    def test_apikey_validation_fails_raises_401(self, MockApiKey):
-        """is_validate raises an exception -> 401."""
+    def test_apikey_validation_fails_raises_401(self, MockApiKey, mock_db):
+        """is_validate raises an exception -> 401 and session is rolled back."""
         mock_apikey = MagicMock()
         mock_apikey.is_validate.side_effect = Exception("DB error")
         MockApiKey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         encoded_key = _b64("my-api-key-value")
 
@@ -409,6 +369,8 @@ class TestGetCurrentApikey:
             deps.get_current_apikey(request, x_api_key=encoded_key)
         assert exc_info.value.status_code == 401
         assert "invalid api key" in exc_info.value.detail.lower()
+        # Session must be rolled back to prevent poisoning the thread-local
+        mock_db.session.rollback.assert_called_once()
 
     @patch(_APIKEY)
     def test_valid_apikey_returns_validated_object(self, MockApiKey):
@@ -418,10 +380,7 @@ class TestGetCurrentApikey:
         mock_apikey.is_validate.return_value = validated_apikey
         MockApiKey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         encoded_key = _b64("my-secret-api-key")
 
@@ -440,10 +399,7 @@ class TestGetCurrentApikey:
         mock_apikey.is_validate.return_value = validated_apikey
         MockApiKey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         encoded_key = _b64("the-actual-key")
         deps.get_current_apikey(request, x_api_key=encoded_key)
@@ -459,10 +415,7 @@ class TestGetCurrentApikey:
         mock_apikey.is_validate.return_value = validated_apikey
         MockApiKey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app, client_host="192.168.1.100")
+        request = _make_request(client_host="192.168.1.100")
 
         encoded_key = _b64("key-value")
         deps.get_current_apikey(request, x_api_key=encoded_key)
@@ -753,10 +706,7 @@ class TestRequireApikeyRole:
         mock_apikey.role.name = "Administrator"
         mock_get_apikey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         dependency = deps.require_apikey_role("Administrator", "Operator")
         result = dependency(request, x_api_key="some-key")
@@ -769,10 +719,7 @@ class TestRequireApikeyRole:
         mock_apikey.role.name = "User"
         mock_get_apikey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         dependency = deps.require_apikey_role("Administrator", "Operator")
         with pytest.raises(HTTPException) as exc_info:
@@ -787,10 +734,7 @@ class TestRequireApikeyRole:
         mock_apikey.role.name = "Operator"
         mock_get_apikey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         dependency = deps.require_apikey_role()
         result = dependency(request, x_api_key="some-key")
@@ -803,10 +747,7 @@ class TestRequireApikeyRole:
         mock_apikey.role.name = "User"
         mock_get_apikey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         dependency = deps.require_apikey_role()
         with pytest.raises(HTTPException) as exc_info:
@@ -833,10 +774,7 @@ class TestRequireApikeyRole:
         mock_apikey.role.name = "Administrator"
         mock_get_apikey.return_value = mock_apikey
 
-        flask_app = MagicMock()
-        flask_app.app_context.return_value.__enter__ = Mock(return_value=None)
-        flask_app.app_context.return_value.__exit__ = Mock(return_value=False)
-        request = _make_request(flask_app=flask_app)
+        request = _make_request()
 
         # Only "Administrator" should pass
         dependency = deps.require_apikey_role("Administrator")
@@ -848,3 +786,30 @@ class TestRequireApikeyRole:
         with pytest.raises(HTTPException) as exc_info:
             dependency(request, x_api_key="some-key")
         assert exc_info.value.status_code == 401
+
+
+# ===========================================================================
+# db_session_cleanup
+# ===========================================================================
+
+class TestDbSessionCleanup:
+    """Tests for the db_session_cleanup yield dependency."""
+
+    @patch(_DB)
+    def test_session_removed_after_normal_request(self, mock_db):
+        """Session is removed after a successful request."""
+        gen = deps.db_session_cleanup()
+        next(gen)  # enter the dependency
+        with pytest.raises(StopIteration):
+            next(gen)  # exit (finally block runs)
+        mock_db.session.remove.assert_called_once()
+
+    @patch(_DB)
+    def test_session_rolled_back_and_removed_on_exception(self, mock_db):
+        """Session is rolled back and removed when an exception occurs."""
+        gen = deps.db_session_cleanup()
+        next(gen)  # enter the dependency
+        with pytest.raises(RuntimeError):
+            gen.throw(RuntimeError("DB failure"))
+        mock_db.session.rollback.assert_called_once()
+        mock_db.session.remove.assert_called_once()

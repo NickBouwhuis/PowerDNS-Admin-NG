@@ -3,33 +3,40 @@ from base64 import b64encode
 
 import pytest
 
-try:
-    from powerdnsadmin import create_app
-    from powerdnsadmin.models.api_key import ApiKey
-    from powerdnsadmin.models.base import db
-    from powerdnsadmin.models.role import Role
-    from powerdnsadmin.models.setting import Setting
-    from powerdnsadmin.models.user import User
-    HAS_FLASK = True
-except ImportError:
-    HAS_FLASK = False
-
-_requires_flask = pytest.mark.skipif(not HAS_FLASK, reason="Flask not installed")
+from powerdnsadmin.core.config import get_config, reset_config
+from powerdnsadmin.models.api_key import ApiKey
+from powerdnsadmin.models.base import db
+from powerdnsadmin.models.role import Role
+from powerdnsadmin.models.setting import Setting
+from powerdnsadmin.models.user import User
 
 
 @pytest.fixture(scope="session")
-def app():
-    if not HAS_FLASK:
-        pytest.skip("Flask not installed")
-    app = create_app('../configs/test.py')
-    yield app
+def app_config():
+    """Load application config from test config file."""
+    reset_config()
+    config = get_config('../configs/test.py')
+    return config
+
+
+@pytest.fixture(scope="session")
+def app(app_config):
+    """Initialize database for tests."""
+    db.init_db(app_config['SQLALCHEMY_DATABASE_URI'])
+    # Import all models to register metadata
+    import powerdnsadmin.models  # noqa: F401
+    yield app_config
 
 
 @pytest.fixture
 def client(app):
-    app.config['TESTING'] = True
-    client = app.test_client()
-    yield client
+    """Create a FastAPI TestClient."""
+    from fastapi.testclient import TestClient
+    from powerdnsadmin.app import create_app
+
+    fastapi_app = create_app()
+    yield TestClient(fastapi_app, raise_server_exceptions=False)
+
 
 def load_data(setting_name, *args, **kwargs):
     if setting_name == 'maintenance':
@@ -56,18 +63,18 @@ def load_data(setting_name, *args, **kwargs):
 
 @pytest.fixture
 def test_admin_user(app):
-    return app.config.get('TEST_ADMIN_USER')
+    return app.get('TEST_ADMIN_USER')
 
 
 @pytest.fixture
 def test_user(app):
-    return app.config.get('TEST_USER')
+    return app.get('TEST_USER')
 
 
 @pytest.fixture
 def basic_auth_admin_headers(app):
-    test_admin_user = app.config.get('TEST_ADMIN_USER')
-    test_admin_pass = app.config.get('TEST_ADMIN_PASSWORD')
+    test_admin_user = app.get('TEST_ADMIN_USER')
+    test_admin_pass = app.get('TEST_ADMIN_PASSWORD')
     user_pass = "{0}:{1}".format(test_admin_user, test_admin_pass)
     user_pass_base64 = b64encode(user_pass.encode('utf-8'))
     headers = {
@@ -78,8 +85,8 @@ def basic_auth_admin_headers(app):
 
 @pytest.fixture
 def basic_auth_user_headers(app):
-    test_user = app.config.get('TEST_USER')
-    test_user_pass = app.config.get('TEST_USER_PASSWORD')
+    test_user = app.get('TEST_USER')
+    test_user_pass = app.get('TEST_USER_PASSWORD')
     user_pass = "{0}:{1}".format(test_user, test_user_pass)
     user_pass_base64 = b64encode(user_pass.encode('utf-8'))
     headers = {
@@ -100,47 +107,46 @@ def initial_data(app):
     api_key_setting = Setting('pdns_api_key', os.environ.get('PDNS_API_KEY', 'test-api-key'))
     allow_create_domain_setting = Setting('allow_user_create_domain', True)
 
-    with app.app_context():
-        try:
-            db.drop_all()
-            db.create_all()
+    try:
+        db.drop_all()
+        db.create_all()
 
-            # Seed roles (migrations normally do this)
-            db.session.add_all([
-                Role(name='Administrator', description='Administrator'),
-                Role(name='User', description='User'),
-                Role(name='Operator', description='Operator'),
-            ])
+        # Seed roles (migrations normally do this)
+        db.session.add_all([
+            Role(name='Administrator', description='Administrator'),
+            Role(name='User', description='User'),
+            Role(name='Operator', description='Operator'),
+        ])
 
-            db.session.add(api_url_setting)
-            db.session.add(api_key_setting)
-            db.session.add(allow_create_domain_setting)
-            db.session.commit()
+        db.session.add(api_url_setting)
+        db.session.add(api_key_setting)
+        db.session.add(allow_create_domain_setting)
+        db.session.commit()
 
-            test_user = app.config.get('TEST_USER')
-            test_user_pass = app.config.get('TEST_USER_PASSWORD')
-            test_admin_user = app.config.get('TEST_ADMIN_USER')
-            test_admin_pass = app.config.get('TEST_ADMIN_PASSWORD')
+        test_user = app.get('TEST_USER')
+        test_user_pass = app.get('TEST_USER_PASSWORD')
+        test_admin_user = app.get('TEST_ADMIN_USER')
+        test_admin_pass = app.get('TEST_ADMIN_PASSWORD')
 
-            admin_user = User(username=test_admin_user,
-                              plain_text_password=test_admin_pass,
-                              email="admin@admin.com")
-            ret = admin_user.create_local_user()
+        admin_user = User(username=test_admin_user,
+                          plain_text_password=test_admin_pass,
+                          email="admin@admin.com")
+        ret = admin_user.create_local_user()
 
-            if not ret['status']:
-                raise Exception("Error occurred creating user {0}".format(ret['msg']))
+        if not ret['status']:
+            raise Exception("Error occurred creating user {0}".format(ret['msg']))
 
-            ordinary_user = User(username=test_user,
-                                 plain_text_password=test_user_pass,
-                                 email="test@test.com")
-            ret = ordinary_user.create_local_user()
+        ordinary_user = User(username=test_user,
+                             plain_text_password=test_user_pass,
+                             email="test@test.com")
+        ret = ordinary_user.create_local_user()
 
-            if not ret['status']:
-                raise Exception("Error occurred creating user {0}".format(ret['msg']))
+        if not ret['status']:
+            raise Exception("Error occurred creating user {0}".format(ret['msg']))
 
-        except Exception as e:
-            print("Unexpected ERROR: {0}".format(e))
-            raise e
+    except Exception as e:
+        print("Unexpected ERROR: {0}".format(e))
+        raise e
 
     yield
 
@@ -157,48 +163,47 @@ def initial_apikey_data(app):
     allow_create_domain_setting = Setting('allow_user_create_domain', True)
     allow_remove_domain_setting = Setting('allow_user_remove_domain', True)
 
-    with app.app_context():
-        try:
-            db.drop_all()
-            db.create_all()
+    try:
+        db.drop_all()
+        db.create_all()
 
-            # Seed roles (migrations normally do this)
-            db.session.add_all([
-                Role(name='Administrator', description='Administrator'),
-                Role(name='User', description='User'),
-                Role(name='Operator', description='Operator'),
-            ])
+        # Seed roles (migrations normally do this)
+        db.session.add_all([
+            Role(name='Administrator', description='Administrator'),
+            Role(name='User', description='User'),
+            Role(name='Operator', description='Operator'),
+        ])
 
-            db.session.add(api_url_setting)
-            db.session.add(api_key_setting)
-            db.session.add(allow_create_domain_setting)
-            db.session.add(allow_remove_domain_setting)
-            db.session.commit()
+        db.session.add(api_url_setting)
+        db.session.add(api_key_setting)
+        db.session.add(allow_create_domain_setting)
+        db.session.add(allow_remove_domain_setting)
+        db.session.commit()
 
-            test_user_apikey = app.config.get('TEST_USER_APIKEY')
-            test_admin_apikey = app.config.get('TEST_ADMIN_APIKEY')
+        test_user_apikey = app.get('TEST_USER_APIKEY')
+        test_admin_apikey = app.get('TEST_ADMIN_APIKEY')
 
-            dummy_apikey = ApiKey(desc="dummy", role_name="Administrator")
+        dummy_apikey = ApiKey(desc="dummy", role_name="Administrator")
 
-            admin_key = dummy_apikey.get_hashed_password(
-                plain_text_password=test_admin_apikey).decode('utf-8')
+        admin_key = dummy_apikey.get_hashed_password(
+            plain_text_password=test_admin_apikey).decode('utf-8')
 
-            admin_apikey = ApiKey(key=admin_key,
-                                  desc="test admin apikey",
-                                  role_name="Administrator")
-            admin_apikey.create()
+        admin_apikey = ApiKey(key=admin_key,
+                              desc="test admin apikey",
+                              role_name="Administrator")
+        admin_apikey.create()
 
-            user_key = dummy_apikey.get_hashed_password(
-                plain_text_password=test_user_apikey).decode('utf-8')
+        user_key = dummy_apikey.get_hashed_password(
+            plain_text_password=test_user_apikey).decode('utf-8')
 
-            user_apikey = ApiKey(key=user_key,
-                                 desc="test user apikey",
-                                 role_name="User")
-            user_apikey.create()
+        user_apikey = ApiKey(key=user_key,
+                             desc="test user apikey",
+                             role_name="User")
+        user_apikey.create()
 
-        except Exception as e:
-            print("Unexpected ERROR: {0}".format(e))
-            raise e
+    except Exception as e:
+        print("Unexpected ERROR: {0}".format(e))
+        raise e
 
     yield
 
@@ -255,8 +260,8 @@ def created_zone_data():
 
 
 def user_data(app):
-    test_user = app.config.get('TEST_USER')
-    test_user_pass = app.config.get('TEST_USER_PASSWORD')
+    test_user = app.get('TEST_USER')
+    test_user_pass = app.get('TEST_USER_PASSWORD')
     data = {
         "username": test_user,
         "plain_text_password": test_user_pass,
@@ -281,38 +286,36 @@ def admin_apikey_data():
 
 @pytest.fixture(scope='module')
 def user_apikey_integration(app):
-    test_user_apikey = app.config.get('TEST_USER_APIKEY')
+    test_user_apikey = app.get('TEST_USER_APIKEY')
     headers = create_apikey_headers(test_user_apikey)
     return headers
 
 
 @pytest.fixture(scope='module')
 def admin_apikey_integration(app):
-    test_user_apikey = app.config.get('TEST_ADMIN_APIKEY')
+    test_user_apikey = app.get('TEST_ADMIN_APIKEY')
     headers = create_apikey_headers(test_user_apikey)
     return headers
 
 
 @pytest.fixture(scope='module')
 def user_apikey(app):
-    with app.app_context():
-        data = user_apikey_data()
-        api_key = ApiKey(desc=data['description'],
-                         role_name=data['role'],
-                         domains=[])
-        headers = create_apikey_headers(api_key.plain_key)
-        return headers
+    data = user_apikey_data()
+    api_key = ApiKey(desc=data['description'],
+                     role_name=data['role'],
+                     domains=[])
+    headers = create_apikey_headers(api_key.plain_key)
+    return headers
 
 
 @pytest.fixture(scope='module')
 def admin_apikey(app):
-    with app.app_context():
-        data = admin_apikey_data()
-        api_key = ApiKey(desc=data['description'],
-                         role_name=data['role'],
-                         domains=[])
-        headers = create_apikey_headers(api_key.plain_key)
-        return headers
+    data = admin_apikey_data()
+    api_key = ApiKey(desc=data['description'],
+                     role_name=data['role'],
+                     domains=[])
+    headers = create_apikey_headers(api_key.plain_key)
+    return headers
 
 
 def create_apikey_headers(passw):

@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _get_flask_app, require_role
+from ..deps import require_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["accounts"])
@@ -29,10 +29,8 @@ def list_accounts(
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.schemas import AccountDetail
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        accounts = Account.query.all() or []
-        return [AccountDetail.model_validate(a).model_dump() for a in accounts]
+    accounts = Account.query.all() or []
+    return [AccountDetail.model_validate(a).model_dump() for a in accounts]
 
 
 @router.get("/pdnsadmin/accounts/{account_name}")
@@ -45,12 +43,10 @@ def get_account(
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.schemas import AccountDetail
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        account = Account.query.filter(Account.name == account_name).first()
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
-        return AccountDetail.model_validate(account).model_dump()
+    account = Account.query.filter(Account.name == account_name).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return AccountDetail.model_validate(account).model_dump()
 
 
 @router.post("/pdnsadmin/accounts", status_code=201)
@@ -63,53 +59,51 @@ def create_account(
     from powerdnsadmin.models.history import History
     from powerdnsadmin.schemas import AccountDetail
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        data = _get_json_body(request)
-        name = data.get("name")
-        description = data.get("description")
-        contact = data.get("contact")
-        mail = data.get("mail")
+    data = _get_json_body(request)
+    name = data.get("name")
+    description = data.get("description")
+    contact = data.get("contact")
+    mail = data.get("mail")
 
-        if not name:
-            raise HTTPException(
-                status_code=400, detail="Account name missing"
-            )
-
-        sanitized_name = Account.sanitize_name(name)
-        existing = Account.query.filter(Account.name == sanitized_name).all()
-        if existing:
-            raise HTTPException(
-                status_code=409,
-                detail="Account {} would be translated to {} which already exists".format(
-                    name, sanitized_name
-                ),
-            )
-
-        account = Account(
-            name=name,
-            description=description,
-            contact=contact,
-            mail=mail,
+    if not name:
+        raise HTTPException(
+            status_code=400, detail="Account name missing"
         )
 
-        try:
-            result = account.create_account()
-        except Exception as e:
-            logger.error("Error: %s", e)
-            raise HTTPException(
-                status_code=500, detail="Account create failed"
-            )
+    sanitized_name = Account.sanitize_name(name)
+    existing = Account.query.filter(Account.name == sanitized_name).all()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="Account {} would be translated to {} which already exists".format(
+                name, sanitized_name
+            ),
+        )
 
-        if not result["status"]:
-            raise HTTPException(status_code=500, detail=result["msg"])
+    account = Account(
+        name=name,
+        description=description,
+        contact=contact,
+        mail=mail,
+    )
 
-        History(
-            msg="Create account {}".format(account.name),
-            created_by=user.username,
-        ).add()
+    try:
+        result = account.create_account()
+    except Exception as e:
+        logger.error("Error: %s", e)
+        raise HTTPException(
+            status_code=500, detail="Account create failed"
+        )
 
-        return AccountDetail.model_validate(account).model_dump()
+    if not result["status"]:
+        raise HTTPException(status_code=500, detail=result["msg"])
+
+    History(
+        msg="Create account {}".format(account.name),
+        created_by=user.username,
+    ).add()
+
+    return AccountDetail.model_validate(account).model_dump()
 
 
 @router.put("/pdnsadmin/accounts/{account_id}", status_code=204)
@@ -122,38 +116,36 @@ def update_account(
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.history import History
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        data = _get_json_body(request)
-        name = data.get("name")
-        description = data.get("description")
-        contact = data.get("contact")
-        mail = data.get("mail")
+    data = _get_json_body(request)
+    name = data.get("name")
+    description = data.get("description")
+    contact = data.get("contact")
+    mail = data.get("mail")
 
-        account = Account.query.get(account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
+    account = Account.query.get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
 
-        if name and Account.sanitize_name(name) != account.name:
-            raise HTTPException(
-                status_code=500, detail="Account name is immutable"
-            )
+    if name and Account.sanitize_name(name) != account.name:
+        raise HTTPException(
+            status_code=500, detail="Account name is immutable"
+        )
 
-        if description is not None:
-            account.description = description
-        if contact is not None:
-            account.contact = contact
-        if mail is not None:
-            account.mail = mail
+    if description is not None:
+        account.description = description
+    if contact is not None:
+        account.contact = contact
+    if mail is not None:
+        account.mail = mail
 
-        result = account.update_account()
-        if not result["status"]:
-            raise HTTPException(status_code=500, detail=result["msg"])
+    result = account.update_account()
+    if not result["status"]:
+        raise HTTPException(status_code=500, detail=result["msg"])
 
-        History(
-            msg="Update account {}".format(account.name),
-            created_by=user.username,
-        ).add()
+    History(
+        msg="Update account {}".format(account.name),
+        created_by=user.username,
+    ).add()
 
     return None
 
@@ -169,30 +161,28 @@ def delete_account(
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.history import History
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        accounts = Account.query.filter(Account.id == account_id).all()
-        if len(accounts) != 1:
-            raise HTTPException(status_code=404, detail="Account not found")
+    accounts = Account.query.filter(Account.id == account_id).all()
+    if len(accounts) != 1:
+        raise HTTPException(status_code=404, detail="Account not found")
 
-        account = accounts[0]
+    account = accounts[0]
 
-        # Remove account association from domains first
-        if account.domains:
-            for domain in account.domains:
-                Domain(name=domain.name).assoc_account(None, update=False)
-            Domain().update()
+    # Remove account association from domains first
+    if account.domains:
+        for domain in account.domains:
+            Domain(name=domain.name).assoc_account(None, update=False)
+        Domain().update()
 
-        result = account.delete_account()
-        if not result:
-            raise HTTPException(
-                status_code=500, detail="Delete of account failed"
-            )
+    result = account.delete_account()
+    if not result:
+        raise HTTPException(
+            status_code=500, detail="Delete of account failed"
+        )
 
-        History(
-            msg="Delete account {}".format(account.name),
-            created_by=user.username,
-        ).add()
+    History(
+        msg="Delete account {}".format(account.name),
+        created_by=user.username,
+    ).add()
 
     return None
 
@@ -211,18 +201,16 @@ def list_account_users(
     from powerdnsadmin.models.account import Account, AccountUser
     from powerdnsadmin.schemas import UserSummary
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        account = Account.query.get(account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
+    account = Account.query.get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
 
-        users = (
-            User.query.join(AccountUser)
-            .filter(AccountUser.account_id == account_id)
-            .all()
-        )
-        return [UserSummary.model_validate(u).model_dump() for u in users]
+    users = (
+        User.query.join(AccountUser)
+        .filter(AccountUser.account_id == account_id)
+        .all()
+    )
+    return [UserSummary.model_validate(u).model_dump() for u in users]
 
 
 @router.put(
@@ -239,30 +227,28 @@ def add_account_user(
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.history import History
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        account = Account.query.get(account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
+    account = Account.query.get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
 
-        target_user = User.query.get(user_id)
-        if not target_user:
-            raise HTTPException(status_code=404, detail="User not found")
+    target_user = User.query.get(user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-        if not account.add_user(target_user):
-            raise HTTPException(
-                status_code=500,
-                detail="Cannot add user {} to {}".format(
-                    target_user.username, account.name
-                ),
-            )
-
-        History(
-            msg="Add {} user privileges on {}".format(
+    if not account.add_user(target_user):
+        raise HTTPException(
+            status_code=500,
+            detail="Cannot add user {} to {}".format(
                 target_user.username, account.name
             ),
-            created_by=user.username,
-        ).add()
+        )
+
+    History(
+        msg="Add {} user privileges on {}".format(
+            target_user.username, account.name
+        ),
+        created_by=user.username,
+    ).add()
 
     return None
 
@@ -281,44 +267,42 @@ def remove_account_user(
     from powerdnsadmin.models.account import Account, AccountUser
     from powerdnsadmin.models.history import History
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        account = Account.query.get(account_id)
-        if not account:
-            raise HTTPException(status_code=404, detail="Account not found")
+    account = Account.query.get(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
 
-        target_user = User.query.get(user_id)
-        if not target_user:
-            raise HTTPException(status_code=404, detail="User not found")
+    target_user = User.query.get(user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-        # Verify user is associated
-        assoc = (
-            User.query.join(AccountUser)
-            .filter(
-                AccountUser.account_id == account_id,
-                AccountUser.user_id == user_id,
-            )
-            .all()
+    # Verify user is associated
+    assoc = (
+        User.query.join(AccountUser)
+        .filter(
+            AccountUser.account_id == account_id,
+            AccountUser.user_id == user_id,
         )
-        if not assoc:
-            raise HTTPException(
-                status_code=404, detail="User not in account"
-            )
+        .all()
+    )
+    if not assoc:
+        raise HTTPException(
+            status_code=404, detail="User not in account"
+        )
 
-        if not account.remove_user(target_user):
-            raise HTTPException(
-                status_code=500,
-                detail="Cannot remove user {} from {}".format(
-                    target_user.username, account.name
-                ),
-            )
-
-        History(
-            msg="Revoke {} user privileges on {}".format(
+    if not account.remove_user(target_user):
+        raise HTTPException(
+            status_code=500,
+            detail="Cannot remove user {} from {}".format(
                 target_user.username, account.name
             ),
-            created_by=user.username,
-        ).add()
+        )
+
+    History(
+        msg="Revoke {} user privileges on {}".format(
+            target_user.username, account.name
+        ),
+        created_by=user.username,
+    ).add()
 
     return None
 

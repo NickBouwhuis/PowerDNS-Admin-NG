@@ -63,11 +63,11 @@ class TestLocalAuthServiceValidate:
 
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
-        mock_app = MagicMock()
+        mock_logger = MagicMock()
         with patch.object(local_mod, "db") as mock_db, \
-             patch.object(local_mod, "current_app", mock_app):
+             patch.object(local_mod, "logger", mock_logger):
             self.mock_db = mock_db
-            self.mock_logger = mock_app.logger
+            self.mock_logger = mock_logger
             self.service = local_mod.LocalAuthService()
             yield
 
@@ -156,7 +156,6 @@ class TestLDAPBind:
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
         mock_ldap = MagicMock()
-        mock_app = MagicMock()
 
         # Provide constants the code references
         mock_ldap.OPT_X_TLS_REQUIRE_CERT = 0x6006
@@ -179,7 +178,6 @@ class TestLDAPBind:
         }.get(k)
 
         with patch.object(ldap_mod, "ldap", mock_ldap), \
-             patch.object(ldap_mod, "current_app", mock_app), \
              patch.object(ldap_mod, "Setting", return_value=mock_setting_instance):
             self.mock_ldap = mock_ldap
             self.service = ldap_mod.LDAPAuthService()
@@ -230,7 +228,6 @@ class TestLDAPValidate:
     @pytest.fixture(autouse=True)
     def _patch_deps(self):
         mock_ldap = MagicMock()
-        mock_app = MagicMock()
         mock_db = MagicMock()
 
         mock_ldap.OPT_X_TLS_REQUIRE_CERT = 0x6006
@@ -255,13 +252,14 @@ class TestLDAPValidate:
         mock_setting_instance.get.side_effect = \
             lambda k: self.LDAP_SETTINGS.get(k)
 
+        mock_logger = MagicMock()
         with patch.object(ldap_mod, "ldap", mock_ldap), \
-             patch.object(ldap_mod, "current_app", mock_app), \
+             patch.object(ldap_mod, "_logger", mock_logger), \
              patch.object(ldap_mod, "db", mock_db), \
              patch.object(ldap_mod, "Setting", return_value=mock_setting_instance):
             self.mock_ldap = mock_ldap
             self.mock_db = mock_db
-            self.mock_logger = mock_app.logger
+            self.mock_logger = mock_logger
             self.service = ldap_mod.LDAPAuthService()
             yield
 

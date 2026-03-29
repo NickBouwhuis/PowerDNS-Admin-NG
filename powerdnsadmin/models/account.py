@@ -1,5 +1,5 @@
 import traceback
-from flask import current_app
+import logging
 from urllib.parse import urljoin
 from sqlalchemy import select, delete
 
@@ -9,6 +9,8 @@ from .base import db
 from .setting import Setting
 from .user import User
 from .account_user import AccountUser
+
+logger = logging.getLogger(__name__)
 
 
 class Account(db.Model):
@@ -52,7 +54,7 @@ class Account(db.Model):
         sanitized_name = ''.join(c for c in name.lower() if c in allowed_characters)
 
         if len(sanitized_name) > Account.name.type.length:
-            current_app.logger.error("Account name {0} too long. Truncated to: {1}".format(
+            logger.error("Account name {0} too long. Truncated to: {1}".format(
                                      sanitized_name, sanitized_name[:Account.name.type.length]))
 
         if not sanitized_name:
@@ -144,7 +146,7 @@ class Account(db.Model):
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot delete account {0} from DB. DETAIL: {1}'.format(
                     self.name, e))
             return False
@@ -193,7 +195,7 @@ class Account(db.Model):
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot revoke user privileges on account {0}. DETAIL: {1}'.
                 format(self.name, e))
 
@@ -204,7 +206,7 @@ class Account(db.Model):
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot grant user privileges to account {0}. DETAIL: {1}'.
                 format(self.name, e))
 
@@ -230,7 +232,7 @@ class Account(db.Model):
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot add user privileges on account {0}. DETAIL: {1}'.
                 format(self.name, e))
             return False
@@ -251,7 +253,7 @@ class Account(db.Model):
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot revoke user privileges on account {0}. DETAIL: {1}'.
                 format(self.name, e))
             return False
@@ -262,7 +264,7 @@ class Account(db.Model):
         """
         db_accounts = db.session.execute(select(Account)).scalars().all()
         list_db_accounts = [d.name for d in db_accounts]
-        current_app.logger.info("Found {} accounts in PowerDNS-Admin".format(
+        logger.info("Found {} accounts in PowerDNS-AdminNG".format(
             len(list_db_accounts)))
         headers = {'X-API-Key': self.PDNS_API_KEY}
         try:
@@ -273,7 +275,7 @@ class Account(db.Model):
                 timeout=int(Setting().get('pdns_api_timeout')),
                 verify=Setting().get('verify_ssl_connections'))
             list_jaccount = set(d['account'] for d in jdata if d['account'])
-            current_app.logger.info("Found {} accounts in PowerDNS".format(
+            logger.info("Found {} accounts in PowerDNS".format(
                 len(list_jaccount)))
 
             try:
@@ -284,30 +286,30 @@ class Account(db.Model):
                     account_id = self.get_id_by_name(account_name)
                     if not account_id:
                         continue
-                    current_app.logger.info("Deleting account for {0}".format(account_name))
+                    logger.info("Deleting account for {0}".format(account_name))
                     account = db.session.get(Account, account_id)
                     account.delete_account(commit=False)
             except Exception as e:
-                current_app.logger.error(
+                logger.error(
                     'Can not delete account from DB. DETAIL: {0}'.format(e))
-                current_app.logger.debug(traceback.format_exc())
+                logger.debug(traceback.format_exc())
 
             for account_name in list_jaccount:
                 account_id = self.get_id_by_name(account_name)
                 if account_id:
                     continue
-                current_app.logger.info("Creating account for {0}".format(account_name))
+                logger.info("Creating account for {0}".format(account_name))
                 account = Account(name=account_name)
                 db.session.add(account)
 
             db.session.commit()
-            current_app.logger.info('Update accounts finished')
+            logger.info('Update accounts finished')
             return {
                 'status': 'ok',
                 'msg': 'Account table has been updated successfully'
             }
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(
+            logger.error(
                 'Cannot update account table. Error: {0}'.format(e))
             return {'status': 'error', 'msg': 'Cannot update account table'}

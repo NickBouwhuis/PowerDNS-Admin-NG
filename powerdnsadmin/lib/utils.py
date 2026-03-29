@@ -228,9 +228,6 @@ def ensure_list(l):
 
 
 def pretty_domain_name(domain_name):
-    # Add a debugging statement to print out the domain name
-    print("Received zone name:", domain_name)
-
     # Check if the domain name is encoded using Punycode
     if domain_name.endswith('.xn--'):
         try:

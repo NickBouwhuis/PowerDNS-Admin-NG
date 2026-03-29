@@ -12,7 +12,7 @@ from base64 import b64encode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..deps import _get_flask_app, get_current_user
+from ..deps import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["apikeys"])
@@ -69,115 +69,113 @@ def create_apikey(
     from powerdnsadmin.models.base import db
     from powerdnsadmin.schemas import ApiKeyPlain
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        data = _get_json_body(request)
+    data = _get_json_body(request)
 
-        if "role" not in data:
-            raise HTTPException(status_code=400, detail="Role is required")
+    if "role" not in data:
+        raise HTTPException(status_code=400, detail="Role is required")
 
-        # Parse role
-        if isinstance(data["role"], str):
-            role_name = data["role"]
-        elif isinstance(data["role"], dict) and "name" in data["role"]:
-            role_name = data["role"]["name"]
-        else:
-            raise HTTPException(status_code=400, detail="Invalid role format")
+    # Parse role
+    if isinstance(data["role"], str):
+        role_name = data["role"]
+    elif isinstance(data["role"], dict) and "name" in data["role"]:
+        role_name = data["role"]["name"]
+    else:
+        raise HTTPException(status_code=400, detail="Invalid role format")
 
-        # Parse domains
-        if "domains" not in data:
-            domains = []
-        elif not isinstance(data["domains"], list):
-            raise HTTPException(status_code=400, detail="Domains must be a list")
-        else:
-            domains = [
-                d["name"] if isinstance(d, dict) else d
-                for d in data["domains"]
-            ]
+    # Parse domains
+    if "domains" not in data:
+        domains = []
+    elif not isinstance(data["domains"], list):
+        raise HTTPException(status_code=400, detail="Domains must be a list")
+    else:
+        domains = [
+            d["name"] if isinstance(d, dict) else d
+            for d in data["domains"]
+        ]
 
-        # Parse accounts
-        if "accounts" not in data:
-            accounts = []
-        elif not isinstance(data["accounts"], list):
-            raise HTTPException(status_code=400, detail="Accounts must be a list")
-        else:
-            accounts = [
-                a["name"] if isinstance(a, dict) else a
-                for a in data["accounts"]
-            ]
+    # Parse accounts
+    if "accounts" not in data:
+        accounts = []
+    elif not isinstance(data["accounts"], list):
+        raise HTTPException(status_code=400, detail="Accounts must be a list")
+    else:
+        accounts = [
+            a["name"] if isinstance(a, dict) else a
+            for a in data["accounts"]
+        ]
 
-        description = data.get("description")
+    description = data.get("description")
 
-        # User role must have zones or accounts
-        if role_name == "User" and not domains and not accounts:
-            raise HTTPException(
-                status_code=400,
-                detail="Api key must have zones or accounts or an administrative role",
-            )
-
-        domain_obj_list = []
-        if role_name == "User" and domains:
-            domain_obj_list = Domain.query.filter(Domain.name.in_(domains)).all()
-            if not domain_obj_list:
-                raise HTTPException(
-                    status_code=404,
-                    detail="One of supplied zones does not exist",
-                )
-
-        account_obj_list = []
-        if role_name == "User" and accounts:
-            account_obj_list = Account.query.filter(Account.name.in_(accounts)).all()
-            if not account_obj_list:
-                raise HTTPException(
-                    status_code=404,
-                    detail="One of supplied accounts does not exist",
-                )
-
-        # Non-admin restrictions
-        if user.role.name not in ("Administrator", "Operator"):
-            if role_name != "User":
-                raise HTTPException(
-                    status_code=401,
-                    detail="User cannot assign other role than User",
-                )
-            if accounts:
-                raise HTTPException(
-                    status_code=401,
-                    detail="User cannot assign accounts",
-                )
-
-            user_domains = _get_user_domains(
-                db, user, Domain, DomainUser, Account, AccountUser
-            )
-            user_domain_names = {d.name for d in user_domains}
-            domain_names = {d.name for d in domain_obj_list}
-
-            if not domain_names.issubset(user_domain_names):
-                raise HTTPException(
-                    status_code=403,
-                    detail="You don't have access to one of zones",
-                )
-
-        apikey = ApiKey(
-            desc=description,
-            role_name=role_name,
-            domains=domain_obj_list,
-            accounts=account_obj_list,
+    # User role must have zones or accounts
+    if role_name == "User" and not domains and not accounts:
+        raise HTTPException(
+            status_code=400,
+            detail="Api key must have zones or accounts or an administrative role",
         )
 
-        try:
-            apikey.create()
-        except Exception as e:
-            logger.error("Error: %s", e)
+    domain_obj_list = []
+    if role_name == "User" and domains:
+        domain_obj_list = Domain.query.filter(Domain.name.in_(domains)).all()
+        if not domain_obj_list:
             raise HTTPException(
-                status_code=500, detail="Api key create failed"
+                status_code=404,
+                detail="One of supplied zones does not exist",
             )
 
-        apikey.plain_key = b64encode(
-            apikey.plain_key.encode("utf-8")
-        ).decode("utf-8")
+    account_obj_list = []
+    if role_name == "User" and accounts:
+        account_obj_list = Account.query.filter(Account.name.in_(accounts)).all()
+        if not account_obj_list:
+            raise HTTPException(
+                status_code=404,
+                detail="One of supplied accounts does not exist",
+            )
 
-        return ApiKeyPlain.model_validate(apikey).model_dump()
+    # Non-admin restrictions
+    if user.role.name not in ("Administrator", "Operator"):
+        if role_name != "User":
+            raise HTTPException(
+                status_code=401,
+                detail="User cannot assign other role than User",
+            )
+        if accounts:
+            raise HTTPException(
+                status_code=401,
+                detail="User cannot assign accounts",
+            )
+
+        user_domains = _get_user_domains(
+            db, user, Domain, DomainUser, Account, AccountUser
+        )
+        user_domain_names = {d.name for d in user_domains}
+        domain_names = {d.name for d in domain_obj_list}
+
+        if not domain_names.issubset(user_domain_names):
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have access to one of zones",
+            )
+
+    apikey = ApiKey(
+        desc=description,
+        role_name=role_name,
+        domains=domain_obj_list,
+        accounts=account_obj_list,
+    )
+
+    try:
+        apikey.create()
+    except Exception as e:
+        logger.error("Error: %s", e)
+        raise HTTPException(
+            status_code=500, detail="Api key create failed"
+        )
+
+    apikey.plain_key = b64encode(
+        apikey.plain_key.encode("utf-8")
+    ).decode("utf-8")
+
+    return ApiKeyPlain.model_validate(apikey).model_dump()
 
 
 @router.get("/pdnsadmin/apikeys")
@@ -193,16 +191,14 @@ def list_apikeys(
     from powerdnsadmin.models.base import db
     from powerdnsadmin.schemas import ApiKeyDetail
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if user.role.name in ("Administrator", "Operator"):
-            apikeys = ApiKey.query.all()
-        else:
-            apikeys = _get_user_apikeys(
-                db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
-            )
+    if user.role.name in ("Administrator", "Operator"):
+        apikeys = ApiKey.query.all()
+    else:
+        apikeys = _get_user_apikeys(
+            db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
+        )
 
-        return [ApiKeyDetail.model_validate(k).model_dump() for k in apikeys]
+    return [ApiKeyDetail.model_validate(k).model_dump() for k in apikeys]
 
 
 @router.get("/pdnsadmin/apikeys/{domain_name}")
@@ -224,33 +220,31 @@ def list_apikeys_by_domain(
     from powerdnsadmin.models.base import db
     from powerdnsadmin.schemas import ApiKeyDetail
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        # If the path parameter is numeric, treat as apikey_id lookup
-        try:
-            apikey_id = int(domain_name)
-            return _get_single_apikey(
-                apikey_id, user, db, ApiKey, Domain, DomainUser,
-                Account, AccountUser, User
-            )
-        except ValueError:
-            pass
+    # If the path parameter is numeric, treat as apikey_id lookup
+    try:
+        apikey_id = int(domain_name)
+        return _get_single_apikey(
+            apikey_id, user, db, ApiKey, Domain, DomainUser,
+            Account, AccountUser, User
+        )
+    except ValueError:
+        pass
 
-        # Otherwise, treat as domain_name filter
-        if user.role.name in ("Administrator", "Operator"):
-            apikeys = ApiKey.query.all()
-        else:
-            apikeys = _get_user_apikeys(
-                db, user, ApiKey, Domain, DomainUser,
-                Account, AccountUser, User, domain_name=domain_name
+    # Otherwise, treat as domain_name filter
+    if user.role.name in ("Administrator", "Operator"):
+        apikeys = ApiKey.query.all()
+    else:
+        apikeys = _get_user_apikeys(
+            db, user, ApiKey, Domain, DomainUser,
+            Account, AccountUser, User, domain_name=domain_name
+        )
+        if not apikeys:
+            raise HTTPException(
+                status_code=403,
+                detail="Zone access not allowed {}".format(domain_name),
             )
-            if not apikeys:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Zone access not allowed {}".format(domain_name),
-                )
 
-        return [ApiKeyDetail.model_validate(k).model_dump() for k in apikeys]
+    return [ApiKeyDetail.model_validate(k).model_dump() for k in apikeys]
 
 
 def _get_single_apikey(apikey_id, user, db, ApiKey, Domain, DomainUser,
@@ -287,137 +281,135 @@ def update_apikey(
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        apikey = ApiKey.query.get(apikey_id)
-        if not apikey:
-            raise HTTPException(status_code=404, detail="API key not found")
+    apikey = ApiKey.query.get(apikey_id)
+    if not apikey:
+        raise HTTPException(status_code=404, detail="API key not found")
 
-        data = _get_json_body(request)
-        description = data.get("description")
+    data = _get_json_body(request)
+    description = data.get("description")
 
-        # Parse role
+    # Parse role
+    role_name = None
+    if "role" in data:
+        if isinstance(data["role"], str):
+            role_name = data["role"]
+        elif isinstance(data["role"], dict) and "name" in data["role"]:
+            role_name = data["role"]["name"]
+        else:
+            raise HTTPException(status_code=400, detail="Invalid role format")
+    target_role = role_name or apikey.role.name
+
+    # Parse domains
+    domains = None
+    if "domains" in data:
+        if not isinstance(data["domains"], list):
+            raise HTTPException(status_code=400, detail="Domains must be a list")
+        domains = [
+            d["name"] if isinstance(d, dict) else d
+            for d in data["domains"]
+        ]
+
+    # Parse accounts
+    accounts = None
+    if "accounts" in data:
+        if not isinstance(data["accounts"], list):
+            raise HTTPException(status_code=400, detail="Accounts must be a list")
+        accounts = [
+            a["name"] if isinstance(a, dict) else a
+            for a in data["accounts"]
+        ]
+
+    domain_obj_list = None
+    account_obj_list = None
+
+    if target_role == "User":
+        current_domains = [d.name for d in apikey.domains]
+        current_accounts = [a.name for a in apikey.accounts]
+
+        if domains is not None:
+            domain_obj_list = Domain.query.filter(Domain.name.in_(domains)).all()
+            if len(domain_obj_list) != len(domains):
+                raise HTTPException(
+                    status_code=404,
+                    detail="One of supplied zones does not exist",
+                )
+            target_domains = domains
+        else:
+            target_domains = current_domains
+
+        if accounts is not None:
+            account_obj_list = Account.query.filter(Account.name.in_(accounts)).all()
+            if len(account_obj_list) != len(accounts):
+                raise HTTPException(
+                    status_code=404,
+                    detail="One of supplied accounts does not exist",
+                )
+            target_accounts = accounts
+        else:
+            target_accounts = current_accounts
+
+        if not target_domains and not target_accounts:
+            raise HTTPException(
+                status_code=400,
+                detail="Api key must have zones or accounts or an administrative role",
+            )
+
+        # Skip update if nothing changed
+        if domains is not None and set(domains) == set(current_domains):
+            domains = None
+        if accounts is not None and set(accounts) == set(current_accounts):
+            accounts = None
+
+    # Non-admin restrictions
+    if user.role.name not in ("Administrator", "Operator"):
+        if role_name and role_name != "User":
+            raise HTTPException(
+                status_code=401,
+                detail="User cannot assign other role than User",
+            )
+        if accounts:
+            raise HTTPException(
+                status_code=401,
+                detail="User cannot assign accounts",
+            )
+
+        user_apikeys = _get_user_apikeys(
+            db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
+        )
+        if apikey_id not in [k.id for k in user_apikeys]:
+            raise HTTPException(
+                status_code=403, detail="Zone access not allowed"
+            )
+
+        if domain_obj_list is not None:
+            user_domains = _get_user_domains(
+                db, user, Domain, DomainUser, Account, AccountUser
+            )
+            user_domain_names = {d.name for d in user_domains}
+            if not {d.name for d in domain_obj_list}.issubset(user_domain_names):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have access to one of zones",
+                )
+
+    # Skip no-op updates
+    if role_name == apikey.role.name:
         role_name = None
-        if "role" in data:
-            if isinstance(data["role"], str):
-                role_name = data["role"]
-            elif isinstance(data["role"], dict) and "name" in data["role"]:
-                role_name = data["role"]["name"]
-            else:
-                raise HTTPException(status_code=400, detail="Invalid role format")
-        target_role = role_name or apikey.role.name
+    if description == apikey.description:
+        description = None
+    if target_role != "User":
+        domains, accounts = [], []
 
-        # Parse domains
-        domains = None
-        if "domains" in data:
-            if not isinstance(data["domains"], list):
-                raise HTTPException(status_code=400, detail="Domains must be a list")
-            domains = [
-                d["name"] if isinstance(d, dict) else d
-                for d in data["domains"]
-            ]
-
-        # Parse accounts
-        accounts = None
-        if "accounts" in data:
-            if not isinstance(data["accounts"], list):
-                raise HTTPException(status_code=400, detail="Accounts must be a list")
-            accounts = [
-                a["name"] if isinstance(a, dict) else a
-                for a in data["accounts"]
-            ]
-
-        domain_obj_list = None
-        account_obj_list = None
-
-        if target_role == "User":
-            current_domains = [d.name for d in apikey.domains]
-            current_accounts = [a.name for a in apikey.accounts]
-
-            if domains is not None:
-                domain_obj_list = Domain.query.filter(Domain.name.in_(domains)).all()
-                if len(domain_obj_list) != len(domains):
-                    raise HTTPException(
-                        status_code=404,
-                        detail="One of supplied zones does not exist",
-                    )
-                target_domains = domains
-            else:
-                target_domains = current_domains
-
-            if accounts is not None:
-                account_obj_list = Account.query.filter(Account.name.in_(accounts)).all()
-                if len(account_obj_list) != len(accounts):
-                    raise HTTPException(
-                        status_code=404,
-                        detail="One of supplied accounts does not exist",
-                    )
-                target_accounts = accounts
-            else:
-                target_accounts = current_accounts
-
-            if not target_domains and not target_accounts:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Api key must have zones or accounts or an administrative role",
-                )
-
-            # Skip update if nothing changed
-            if domains is not None and set(domains) == set(current_domains):
-                domains = None
-            if accounts is not None and set(accounts) == set(current_accounts):
-                accounts = None
-
-        # Non-admin restrictions
-        if user.role.name not in ("Administrator", "Operator"):
-            if role_name and role_name != "User":
-                raise HTTPException(
-                    status_code=401,
-                    detail="User cannot assign other role than User",
-                )
-            if accounts:
-                raise HTTPException(
-                    status_code=401,
-                    detail="User cannot assign accounts",
-                )
-
-            user_apikeys = _get_user_apikeys(
-                db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
-            )
-            if apikey_id not in [k.id for k in user_apikeys]:
-                raise HTTPException(
-                    status_code=403, detail="Zone access not allowed"
-                )
-
-            if domain_obj_list is not None:
-                user_domains = _get_user_domains(
-                    db, user, Domain, DomainUser, Account, AccountUser
-                )
-                user_domain_names = {d.name for d in user_domains}
-                if not {d.name for d in domain_obj_list}.issubset(user_domain_names):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="You don't have access to one of zones",
-                    )
-
-        # Skip no-op updates
-        if role_name == apikey.role.name:
-            role_name = None
-        if description == apikey.description:
-            description = None
-        if target_role != "User":
-            domains, accounts = [], []
-
-        try:
-            apikey.update(
-                role_name=role_name,
-                domains=domains,
-                accounts=accounts,
-                description=description,
-            )
-        except Exception as e:
-            logger.error("Error: %s", e)
-            raise HTTPException(status_code=500, detail="API key update failed")
+    try:
+        apikey.update(
+            role_name=role_name,
+            domains=domains,
+            accounts=accounts,
+            description=description,
+        )
+    except Exception as e:
+        logger.error("Error: %s", e)
+        raise HTTPException(status_code=500, detail="API key update failed")
 
     return None
 
@@ -435,38 +427,36 @@ def delete_apikey(
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        apikey = ApiKey.query.get(apikey_id)
-        if not apikey:
-            raise HTTPException(status_code=404, detail="API key not found")
+    apikey = ApiKey.query.get(apikey_id)
+    if not apikey:
+        raise HTTPException(status_code=404, detail="API key not found")
 
-        if user.role.name not in ("Administrator", "Operator"):
-            user_apikeys = _get_user_apikeys(
-                db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
-            )
-            user_domains = user.get_domain().all()
-            user_domain_names = {d.name for d in user_domains}
-            apikey_domain_names = {d.name for d in apikey.domains}
+    if user.role.name not in ("Administrator", "Operator"):
+        user_apikeys = _get_user_apikeys(
+            db, user, ApiKey, Domain, DomainUser, Account, AccountUser, User
+        )
+        user_domains = user.get_domain().all()
+        user_domain_names = {d.name for d in user_domains}
+        apikey_domain_names = {d.name for d in apikey.domains}
 
-            if not apikey_domain_names.issubset(user_domain_names):
-                raise HTTPException(
-                    status_code=403,
-                    detail="You don't have access to some zones apikey belongs to",
-                )
-
-            if apikey_id not in [k.id for k in user_apikeys]:
-                raise HTTPException(
-                    status_code=403, detail="Zone access not allowed"
-                )
-
-        try:
-            apikey.delete()
-        except Exception as e:
-            logger.error("Error: %s", e)
+        if not apikey_domain_names.issubset(user_domain_names):
             raise HTTPException(
-                status_code=500, detail="API key delete failed"
+                status_code=403,
+                detail="You don't have access to some zones apikey belongs to",
             )
+
+        if apikey_id not in [k.id for k in user_apikeys]:
+            raise HTTPException(
+                status_code=403, detail="Zone access not allowed"
+            )
+
+    try:
+        apikey.delete()
+    except Exception as e:
+        logger.error("Error: %s", e)
+        raise HTTPException(
+            status_code=500, detail="API key delete failed"
+        )
 
     return None
 

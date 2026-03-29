@@ -94,8 +94,7 @@ def _make_mock_apikey(key_id=1, description="test key", role_name="Administrator
 def _build_app_and_client():
     """Build a FastAPI app with the three management routers.
 
-    Returns (app, client).  A mock flask_app is attached to
-    ``app.state.flask_app`` so that ``_get_flask_app`` works.
+    Returns (app, client).
     """
     from fastapi import APIRouter
 
@@ -106,12 +105,6 @@ def _build_app_and_client():
     api_router.include_router(accounts_router)
     api_router.include_router(apikeys_router)
     app.include_router(api_router)
-
-    # Provide a fake flask_app on state so _get_flask_app works.
-    mock_flask_app = MagicMock()
-    mock_flask_app.app_context.return_value.__enter__ = MagicMock(return_value=None)
-    mock_flask_app.app_context.return_value.__exit__ = MagicMock(return_value=False)
-    app.state.flask_app = mock_flask_app
 
     client = TestClient(app, raise_server_exceptions=False)
     return app, client

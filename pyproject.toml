@@ -1,5 +1,5 @@
 [project]
-name = "powerdns-admin"
+name = "powerdns-adminng"
 version = "0.5.0-dev"
 requires-python = ">=3.9"
 

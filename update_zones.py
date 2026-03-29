@@ -13,22 +13,26 @@
 import sys
 import logging
 
-from powerdnsadmin import create_app
+from powerdnsadmin.core.config import get_config
+from powerdnsadmin.models.base import db
 from powerdnsadmin.models.domain import Domain
 from powerdnsadmin.models.setting import Setting
 
-app = create_app()
-app.logger.setLevel(logging.INFO)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-with app.app_context():
-    status = Setting().get('bg_domain_updates')
+config = get_config()
+db.init_db(config['SQLALCHEMY_DATABASE_URI'])
+import powerdnsadmin.models  # noqa: F401
 
-    ### Check if bg_domain_updates is set to true
-    if not status:
-        app.logger.error('Please turn on "bg_domain_updates" setting to run this job.')
-        sys.exit(1)
+status = Setting().get('bg_domain_updates')
 
-    ### Start the update process
-    app.logger.info('Update zones from nameserver API')
+### Check if bg_domain_updates is set to true
+if not status:
+    logger.error('Please turn on "bg_domain_updates" setting to run this job.')
+    sys.exit(1)
 
-    Domain().update()
+### Start the update process
+logger.info('Update zones from nameserver API')
+
+Domain().update()

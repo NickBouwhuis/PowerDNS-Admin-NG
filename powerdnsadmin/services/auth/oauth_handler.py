@@ -4,7 +4,9 @@ Shared OAuth/SSO user provisioning service.
 Consolidates the duplicated user-lookup, creation, and group-role
 assignment logic used by Google, GitHub, Azure, and OIDC OAuth flows.
 """
-from flask import current_app
+import logging
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select
 
 from ...models.base import db
@@ -56,12 +58,12 @@ class OAuthUserService:
         )
         result = user.create_local_user()
         if not result['status']:
-            current_app.logger.warning(
+            logger.warning(
                 'Unable to create OAuth user "{0}": {1}'.format(
                     username, result['msg']))
             return None, False, result['msg']
 
-        current_app.logger.info(
+        logger.info(
             'Created OAuth user "{0}" in the DB'.format(username))
         return user, True, None
 
@@ -102,27 +104,27 @@ class OAuthUserService:
             tuple: (authorized: bool, role_name: str or None)
         """
         if admin_group and admin_group in groups:
-            current_app.logger.info(
+            logger.info(
                 'Setting role for user "{0}" to Administrator '
                 'due to group membership'.format(user.username))
             user.set_role('Administrator')
             return True, 'Administrator'
 
         if operator_group and operator_group in groups:
-            current_app.logger.info(
+            logger.info(
                 'Setting role for user "{0}" to Operator '
                 'due to group membership'.format(user.username))
             user.set_role('Operator')
             return True, 'Operator'
 
         if user_group and user_group in groups:
-            current_app.logger.info(
+            logger.info(
                 'Setting role for user "{0}" to User '
                 'due to group membership'.format(user.username))
             user.set_role('User')
             return True, 'User'
 
-        current_app.logger.warning(
+        logger.warning(
             'User "{0}" has no relevant group memberships'.format(
                 user.username))
         return False, None

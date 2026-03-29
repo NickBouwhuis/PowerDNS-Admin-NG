@@ -3,7 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [main, master, dev, ng]
   pull_request:
     branches: [main, master]
 
@@ -87,24 +87,47 @@ jobs:
 
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short
-        env:
-          FLASK_CONF: ../configs/test.py
 
   docker:
-    name: Docker Build
+    name: Docker Build & Push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/powerdns-admin-ng
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=branch
+
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: ./
           file: ./docker/Dockerfile
-          push: false
-          tags: powerdns-admin:ci-test
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

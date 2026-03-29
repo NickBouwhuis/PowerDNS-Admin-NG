@@ -32,25 +32,26 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 
-def _get_flask_app(request: Request):
-    """Retrieve the Flask app stored on FastAPI state."""
-    return request.app.state.flask_app
+def db_session_cleanup():
+    """Ensure the scoped DB session is cleaned up for every request.
 
+    Because FastAPI runs sync generator dependencies via run_in_threadpool,
+    the teardown may execute on a *different* thread than the route handler.
+    Since db.session is thread-local (scoped_session), that means the
+    teardown could miss the poisoned session.
 
-def _get_db_session(request: Request):
-    """Get a SQLAlchemy session from Flask-SQLAlchemy.
-
-    Pushes a Flask app context so that Flask-SQLAlchemy's
-    scoped session works correctly.
+    Fix: remove any stale session at the START (runs on the route handler's
+    thread, guaranteed to hit the right thread-local).
     """
-    flask_app = _get_flask_app(request)
-    ctx = flask_app.app_context()
-    ctx.push()
+    from powerdnsadmin.models.base import db
+    db.session.remove()
     try:
-        from powerdnsadmin.models.base import db
-        yield db.session
+        yield
+    except Exception:
+        db.session.rollback()
+        raise
     finally:
-        ctx.pop()
+        db.session.remove()
 
 
 def get_current_user(
@@ -80,35 +81,38 @@ def get_current_user(
 
     username, password = parts
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        user = User(username=username, password=password,
-                    plain_text_password=password)
+    user = User(username=username, password=password,
+                plain_text_password=password)
 
-        # Check email verification if enabled
-        if Setting().get('verify_user_email') and user.email and not user.confirmed:
-            raise HTTPException(status_code=401, detail="Email not verified")
+    # Check email verification if enabled
+    if Setting().get('verify_user_email') and user.email and not user.confirmed:
+        raise HTTPException(status_code=401, detail="Email not verified")
 
-        method = "LDAP" if auth_method != "LOCAL" else "LOCAL"
-        try:
-            if not user.is_validate(method=method, src_ip=request.client.host if request.client else ""):
-                raise HTTPException(status_code=401, detail="Invalid credentials")
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error("Auth error: %s", e)
-            raise HTTPException(status_code=401, detail="Authentication failed")
-
-        # Re-fetch the full user object from DB
+    method = "LDAP" if auth_method != "LOCAL" else "LOCAL"
+    try:
+        if not user.is_validate(method=method, src_ip=request.client.host if request.client else ""):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Rollback the failed transaction on this thread before it poisons
+        # subsequent requests.  The async middleware's cleanup runs on the
+        # event-loop thread and cannot reach this thread-local session.
         from powerdnsadmin.models.base import db
-        authenticated_user = db.session.execute(
-            select(User).where(User.username == username)
-        ).scalar_one_or_none()
+        db.session.rollback()
+        logger.error("Auth error: %s", e)
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
-        if not authenticated_user:
-            raise HTTPException(status_code=401, detail="User not found")
+    # Re-fetch the full user object from DB
+    from powerdnsadmin.models.base import db
+    authenticated_user = db.session.execute(
+        select(User).where(User.username == username)
+    ).scalar_one_or_none()
 
-        return authenticated_user
+    if not authenticated_user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    return authenticated_user
 
 
 def get_current_apikey(
@@ -130,21 +134,24 @@ def get_current_apikey(
     except (binascii.Error, UnicodeDecodeError, TypeError):
         raise HTTPException(status_code=401, detail="Invalid base64-encoded API key")
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        apikey = ApiKey(key=apikey_val)
-        apikey.plain_text_password = apikey_val
+    apikey = ApiKey(key=apikey_val)
+    apikey.plain_text_password = apikey_val
 
-        try:
-            validated = apikey.is_validate(
-                method="LOCAL",
-                src_ip=request.client.host if request.client else "",
-            )
-        except Exception as e:
-            logger.error("API key auth error: %s", e)
-            raise HTTPException(status_code=401, detail="Invalid API key")
+    try:
+        validated = apikey.is_validate(
+            method="LOCAL",
+            src_ip=request.client.host if request.client else "",
+        )
+    except Exception as e:
+        # Rollback the failed transaction on this thread before it poisons
+        # subsequent requests.  The async middleware's cleanup runs on the
+        # event-loop thread and cannot reach this thread-local session.
+        from powerdnsadmin.models.base import db
+        db.session.rollback()
+        logger.error("API key auth error: %s", e)
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-        return validated
+    return validated
 
 
 def get_current_user_or_apikey(
@@ -222,13 +229,11 @@ def require_apikey_role(*roles: str):
     ):
         apikey = get_current_apikey(request, x_api_key)
 
-        flask_app = _get_flask_app(request)
-        with flask_app.app_context():
-            if apikey.role.name not in roles:
-                raise HTTPException(
-                    status_code=401,
-                    detail="API key does not have sufficient privileges",
-                )
+        if apikey.role.name not in roles:
+            raise HTTPException(
+                status_code=401,
+                detail="API key does not have sufficient privileges",
+            )
 
         return apikey
 
@@ -277,26 +282,24 @@ def apikey_can_create_domain(
     from powerdnsadmin.models.setting import Setting
     from powerdnsadmin.models.domain import Domain
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (apikey.role.name not in ("Administrator", "Operator")
-                and not Setting().get("allow_user_create_domain")):
-            raise HTTPException(
-                status_code=401,
-                detail="API key does not have enough privileges to create zone",
-            )
+    if (apikey.role.name not in ("Administrator", "Operator")
+            and not Setting().get("allow_user_create_domain")):
+        raise HTTPException(
+            status_code=401,
+            detail="API key does not have enough privileges to create zone",
+        )
 
-        if Setting().get("deny_domain_override"):
-            try:
-                body = json.loads(request._body) if hasattr(request, '_body') else {}
-            except (json.JSONDecodeError, TypeError):
-                body = {}
-            name = body.get("name")
-            if name and Domain().is_overriding(name):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Zone override of record not allowed",
-                )
+    if Setting().get("deny_domain_override"):
+        try:
+            body = json.loads(request._body) if hasattr(request, '_body') else {}
+        except (json.JSONDecodeError, TypeError):
+            body = {}
+        name = body.get("name")
+        if name and Domain().is_overriding(name):
+            raise HTTPException(
+                status_code=409,
+                detail="Zone override of record not allowed",
+            )
 
     return apikey
 
@@ -314,14 +317,12 @@ def apikey_can_remove_domain(
     if request.method != "DELETE":
         return apikey
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (apikey.role.name not in ("Administrator", "Operator")
-                and not Setting().get("allow_user_remove_domain")):
-            raise HTTPException(
-                status_code=401,
-                detail="API key does not have enough privileges to remove zone",
-            )
+    if (apikey.role.name not in ("Administrator", "Operator")
+            and not Setting().get("allow_user_remove_domain")):
+        raise HTTPException(
+            status_code=401,
+            detail="API key does not have enough privileges to remove zone",
+        )
 
     return apikey
 
@@ -333,14 +334,12 @@ def apikey_can_configure_dnssec(
     """Check API key can configure DNSSEC (replaces @apikey_can_configure_dnssec)."""
     from powerdnsadmin.models.setting import Setting
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (apikey.role.name not in ("Administrator", "Operator")
-                and Setting().get("dnssec_admins_only")):
-            raise HTTPException(
-                status_code=403,
-                detail="API key does not have enough privileges to configure DNSSEC",
-            )
+    if (apikey.role.name not in ("Administrator", "Operator")
+            and Setting().get("dnssec_admins_only")):
+        raise HTTPException(
+            status_code=403,
+            detail="API key does not have enough privileges to configure DNSSEC",
+        )
 
     return apikey
 
@@ -356,26 +355,24 @@ def user_can_create_domain(
     from powerdnsadmin.models.setting import Setting
     from powerdnsadmin.models.domain import Domain
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (user.role.name not in ("Administrator", "Operator")
-                and not Setting().get("allow_user_create_domain")):
-            raise HTTPException(
-                status_code=401,
-                detail="User does not have enough privileges to create zone",
-            )
+    if (user.role.name not in ("Administrator", "Operator")
+            and not Setting().get("allow_user_create_domain")):
+        raise HTTPException(
+            status_code=401,
+            detail="User does not have enough privileges to create zone",
+        )
 
-        if Setting().get("deny_domain_override"):
-            try:
-                body = json.loads(request._body) if hasattr(request, '_body') else {}
-            except (json.JSONDecodeError, TypeError):
-                body = {}
-            name = body.get("name")
-            if name and Domain().is_overriding(name):
-                raise HTTPException(
-                    status_code=409,
-                    detail="Zone override of record not allowed",
-                )
+    if Setting().get("deny_domain_override"):
+        try:
+            body = json.loads(request._body) if hasattr(request, '_body') else {}
+        except (json.JSONDecodeError, TypeError):
+            body = {}
+        name = body.get("name")
+        if name and Domain().is_overriding(name):
+            raise HTTPException(
+                status_code=409,
+                detail="Zone override of record not allowed",
+            )
 
     return user
 
@@ -391,12 +388,10 @@ async def forward_to_pdns(request: Request) -> Response:
     """
     from powerdnsadmin.models.setting import Setting
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        setting = Setting()
-        api_url = setting.get("pdns_api_url")
-        api_key = setting.get("pdns_api_key")
-        verify_ssl = setting.get("verify_ssl_connections")
+    setting = Setting()
+    api_url = setting.get("pdns_api_url")
+    api_key = setting.get("pdns_api_key")
+    verify_ssl = setting.get("verify_ssl_connections")
 
     # Build target URL: base URL + the original request path + query string
     path = request.url.path

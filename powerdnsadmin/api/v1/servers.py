@@ -18,7 +18,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..deps import (
-    _get_flask_app,
     forward_to_pdns,
     get_current_apikey,
     get_current_user_or_apikey,
@@ -54,25 +53,21 @@ async def get_zones(
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.schemas import ZoneSummary
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if server_id == "pdnsadmin":
-            if apikey.role.name in ("Administrator", "Operator"):
-                domains = Domain.query.all()
-            else:
-                domains = apikey.domains
-            return [ZoneSummary.model_validate(d).model_dump() for d in domains]
+    if server_id == "pdnsadmin":
+        if apikey.role.name in ("Administrator", "Operator"):
+            domains = Domain.query.all()
+        else:
+            domains = apikey.domains
+        return [ZoneSummary.model_validate(d).model_dump() for d in domains]
 
     # Forward to PowerDNS
     resp = await forward_to_pdns(request)
 
     # Filter zones for User role
     if apikey.role.name not in ("Administrator", "Operator") and resp.status_code == 200:
-        flask_app = _get_flask_app(request)
-        with flask_app.app_context():
-            domain_names = [d.name for d in apikey.domains]
-            account_domains = [d.name for a in apikey.accounts for d in a.domains]
-            allowed = set(domain_names + account_domains)
+        domain_names = [d.name for d in apikey.domains]
+        account_domains = [d.name for a in apikey.accounts for d in a.domains]
+        allowed = set(domain_names + account_domains)
 
         try:
             all_zones = json.loads(resp.body)
@@ -100,29 +95,27 @@ async def create_zone(
     resp = await forward_to_pdns(request)
 
     if resp.status_code == 201:
-        flask_app = _get_flask_app(request)
-        with flask_app.app_context():
-            created_by = _is_custom_header_api(request, apikey)
-            try:
-                data = json.loads(resp.body) if resp.body else {}
-            except json.JSONDecodeError:
-                data = {}
-            zone_name = data.get("name", "").rstrip(".")
+        created_by = _is_custom_header_api(request, apikey)
+        try:
+            data = json.loads(resp.body) if resp.body else {}
+        except json.JSONDecodeError:
+            data = {}
+        zone_name = data.get("name", "").rstrip(".")
 
-            if apikey.role.name not in ("Administrator", "Operator"):
-                domain = Domain(name=zone_name)
-                apikey.domains.append(domain)
+        if apikey.role.name not in ("Administrator", "Operator"):
+            domain = Domain(name=zone_name)
+            apikey.domains.append(domain)
 
-            domain = Domain()
-            domain.update()
+        domain = Domain()
+        domain.update()
 
-            history = History(
-                msg="Add zone {}".format(zone_name),
-                detail=json.dumps(data),
-                created_by=created_by,
-                domain_id=domain.get_id_by_name(zone_name),
-            )
-            history.add()
+        history = History(
+            msg="Add zone {}".format(zone_name),
+            detail=json.dumps(data),
+            created_by=created_by,
+            domain_id=domain.get_id_by_name(zone_name),
+        )
+        history.add()
 
     return resp
 
@@ -161,31 +154,27 @@ async def update_zone(
         body_data = {}
 
     if "dnssec" in body_data or "nsec3param" in body_data:
-        flask_app = _get_flask_app(request)
-        with flask_app.app_context():
-            if (apikey.role.name not in ("Administrator", "Operator")
-                    and Setting().get("dnssec_admins_only")):
-                raise HTTPException(
-                    status_code=403,
-                    detail="API key does not have enough privileges to configure DNSSEC",
-                )
+        if (apikey.role.name not in ("Administrator", "Operator")
+                and Setting().get("dnssec_admins_only")):
+            raise HTTPException(
+                status_code=403,
+                detail="API key does not have enough privileges to configure DNSSEC",
+            )
 
     resp = await forward_to_pdns(request)
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if not Setting().get("bg_domain_updates"):
-            Domain().update()
+    if not Setting().get("bg_domain_updates"):
+        Domain().update()
 
-        if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
-            created_by = _is_custom_header_api(request, apikey)
-            history = History(
-                msg="Updated zone {}".format(zone_id.rstrip(".")),
-                detail="",
-                created_by=created_by,
-                domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
-            )
-            history.add()
+    if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
+        created_by = _is_custom_header_api(request, apikey)
+        history = History(
+            msg="Updated zone {}".format(zone_id.rstrip(".")),
+            detail="",
+            created_by=created_by,
+            domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
+        )
+        history.add()
 
     return resp
 
@@ -209,32 +198,29 @@ async def patch_zone(
     except json.JSONDecodeError:
         body_data = {}
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if apikey.role.name not in ("Administrator", "Operator"):
-            _validate_rrset_types(body_data)
-            _validate_rrset_ttl(body_data)
+    if apikey.role.name not in ("Administrator", "Operator"):
+        _validate_rrset_types(body_data)
+        _validate_rrset_ttl(body_data)
 
     resp = await forward_to_pdns(request)
 
-    with flask_app.app_context():
-        if not Setting().get("bg_domain_updates"):
-            Domain().update()
+    if not Setting().get("bg_domain_updates"):
+        Domain().update()
 
-        if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
-            created_by = _is_custom_header_api(request, apikey)
-            rrsets = body_data.get("rrsets", [])
-            history = History(
-                msg="Apply record changes to zone {}".format(zone_id.rstrip(".")),
-                detail=json.dumps({
-                    "domain": zone_id.rstrip("."),
-                    "add_rrsets": [r for r in rrsets if r.get("changetype") == "REPLACE"],
-                    "del_rrsets": [r for r in rrsets if r.get("changetype") == "DELETE"],
-                }),
-                created_by=created_by,
-                domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
-            )
-            history.add()
+    if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
+        created_by = _is_custom_header_api(request, apikey)
+        rrsets = body_data.get("rrsets", [])
+        history = History(
+            msg="Apply record changes to zone {}".format(zone_id.rstrip(".")),
+            detail=json.dumps({
+                "domain": zone_id.rstrip("."),
+                "add_rrsets": [r for r in rrsets if r.get("changetype") == "REPLACE"],
+                "del_rrsets": [r for r in rrsets if r.get("changetype") == "DELETE"],
+            }),
+            created_by=created_by,
+            domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
+        )
+        history.add()
 
     return resp
 
@@ -252,30 +238,27 @@ async def delete_zone(
     from powerdnsadmin.models.setting import Setting
 
     # Check removal permission
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (apikey.role.name not in ("Administrator", "Operator")
-                and not Setting().get("allow_user_remove_domain")):
-            raise HTTPException(
-                status_code=401,
-                detail="API key does not have enough privileges to remove zone",
-            )
+    if (apikey.role.name not in ("Administrator", "Operator")
+            and not Setting().get("allow_user_remove_domain")):
+        raise HTTPException(
+            status_code=401,
+            detail="API key does not have enough privileges to remove zone",
+        )
 
     resp = await forward_to_pdns(request)
 
-    with flask_app.app_context():
-        if not Setting().get("bg_domain_updates"):
-            Domain().update()
+    if not Setting().get("bg_domain_updates"):
+        Domain().update()
 
-        if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
-            created_by = _is_custom_header_api(request, apikey)
-            history = History(
-                msg="Deleted zone {}".format(zone_id.rstrip(".")),
-                detail="",
-                created_by=created_by,
-                domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
-            )
-            history.add()
+    if 200 <= resp.status_code < 300 and Setting().get("enable_api_rr_history"):
+        created_by = _is_custom_header_api(request, apikey)
+        history = History(
+            msg="Deleted zone {}".format(zone_id.rstrip(".")),
+            detail="",
+            created_by=created_by,
+            domain_id=Domain().get_id_by_name(zone_id.rstrip(".")),
+        )
+        history.add()
 
     return resp
 
@@ -304,14 +287,12 @@ async def create_cryptokey(
     """Create a DNSSEC cryptokey. Requires DNSSEC admin privileges."""
     from powerdnsadmin.models.setting import Setting
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if (apikey.role.name not in ("Administrator", "Operator")
-                and Setting().get("dnssec_admins_only")):
-            raise HTTPException(
-                status_code=403,
-                detail="API key does not have enough privileges to configure DNSSEC",
-            )
+    if (apikey.role.name not in ("Administrator", "Operator")
+            and Setting().get("dnssec_admins_only")):
+        raise HTTPException(
+            status_code=403,
+            detail="API key does not have enough privileges to configure DNSSEC",
+        )
 
     return await forward_to_pdns(request)
 
@@ -329,14 +310,12 @@ async def cryptokey_detail(
 ):
     """Get/update/delete a specific DNSSEC cryptokey."""
     # Also need domain access check
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        if apikey.role.name not in ("Administrator", "Operator"):
-            domain_names = [item.name for item in apikey.domains]
-            accounts_domains = [d.name for a in apikey.accounts for d in a.domains]
-            allowed = set(domain_names + accounts_domains)
-            if zone_id.rstrip(".") not in allowed:
-                raise HTTPException(status_code=403, detail="Zone access not allowed")
+    if apikey.role.name not in ("Administrator", "Operator"):
+        domain_names = [item.name for item in apikey.domains]
+        accounts_domains = [d.name for a in apikey.accounts for d in a.domains]
+        allowed = set(domain_names + accounts_domains)
+        if zone_id.rstrip(".") not in allowed:
+            raise HTTPException(status_code=403, detail="Zone access not allowed")
 
     return await forward_to_pdns(request)
 
@@ -395,9 +374,7 @@ def sync_domains(
     """Synchronize zones from PowerDNS to local database."""
     from powerdnsadmin.models.domain import Domain
 
-    flask_app = _get_flask_app(request)
-    with flask_app.app_context():
-        Domain().update()
+    Domain().update()
 
     return "Finished synchronization in background"
 

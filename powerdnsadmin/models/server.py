@@ -1,7 +1,9 @@
+import logging
 import traceback
-from flask import current_app
 
 from ..services.pdns_client import PowerDNSClient
+
+logger = logging.getLogger(__name__)
 
 
 class Server(object):
@@ -21,9 +23,9 @@ class Server(object):
             client = PowerDNSClient()
             return client.get_server_config(self.server_id)
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Can not get server configuration. DETAIL: {0}".format(e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
             return []
 
     def get_statistic(self):
@@ -34,9 +36,9 @@ class Server(object):
             client = PowerDNSClient()
             return client.get_server_statistics(self.server_id)
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Can not get server statistics. DETAIL: {0}".format(e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
             return []
 
     def global_search(self, object_type='all', query=''):
@@ -47,7 +49,7 @@ class Server(object):
             client = PowerDNSClient()
             return client.global_search(query, object_type, self.server_id)
         except Exception as e:
-            current_app.logger.error(
+            logger.error(
                 "Can not make global search. DETAIL: {0}".format(e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.debug(traceback.format_exc())
             return []

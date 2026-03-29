@@ -1,5 +1,3 @@
-from flask_migrate import Migrate
-
 from .base import db
 from .user import User
 from .role import Role
@@ -17,8 +15,4 @@ from .domain_template import DomainTemplate
 from .domain_template_record import DomainTemplateRecord
 from .record import Record
 from .record_entry import RecordEntry
-
-
-def init_app(app):
-    db.init_app(app)
-    _migrate = Migrate(app, db)  # lgtm [py/unused-local-variable]
+from .sessions import Sessions

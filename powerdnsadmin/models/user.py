@@ -1,9 +1,8 @@
+import logging
 import os
 import base64
 import traceback
 import pyotp
-from flask import current_app
-from flask_login import AnonymousUserMixin
 from sqlalchemy import orm
 import qrcode as qrc
 import qrcode.image.svg as qrc_svg
@@ -20,13 +19,24 @@ from .setting import Setting
 from .domain_user import DomainUser
 from .account_user import AccountUser
 
+logger = logging.getLogger(__name__)
 
-class Anonymous(AnonymousUserMixin):
+
+class Anonymous:
+    """Anonymous user placeholder (replaces Flask-Login's AnonymousUserMixin)."""
+    is_authenticated = False
+    is_active = False
+    is_anonymous = True
+
     def __init__(self):
         self.username = 'Anonymous'
 
+    def get_id(self):
+        return None
+
 
 class User(db.Model):
+    __tablename__ = 'user'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True)
     password = db.Column(db.String(64))
@@ -92,7 +102,7 @@ class User(db.Model):
         return '<User {0}>'.format(self.username)
 
     def get_totp_uri(self):
-        return "otpauth://totp/{0}:{1}?secret={2}&issuer=PowerDNS-Admin".format(
+        return "otpauth://totp/{0}:{1}?secret={2}&issuer=PowerDNS-AdminNG".format(
             Setting().get('site_name'), self.username, self.otp_secret)
 
     def verify_totp(self, token):
@@ -159,7 +169,7 @@ class User(db.Model):
             )
             return success
 
-        current_app.logger.error('Unsupported authentication method')
+        logger.error('Unsupported authentication method')
         return False
 
     def create_user(self):
@@ -360,7 +370,7 @@ class User(db.Model):
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error('Cannot delete user {0} from DB. DETAIL: {1}'.format(
+            logger.error('Cannot delete user {0} from DB. DETAIL: {1}'.format(
                 self.username, e))
             return False
 
@@ -386,7 +396,7 @@ class User(db.Model):
                 return True
             except Exception as e:
                 db.session.rollback()
-                current_app.logger.error(
+                logger.error(
                     'Cannot revoke user {0} privileges. DETAIL: {1}'.format(
                         self.username, e))
                 return False
@@ -447,9 +457,9 @@ class User(db.Model):
         searchFilter = "(&({0}={1}){2})".format(LDAP_FILTER_USERNAME,
                                                         self.username,
                                                         LDAP_FILTER_BASIC)
-        current_app.logger.debug('Ldap searchFilter {0}'.format(searchFilter))
+        logger.debug('Ldap searchFilter {0}'.format(searchFilter))
         ldap_result = self.ldap_search(searchFilter, LDAP_BASE_DN, [key])
-        current_app.logger.debug('Ldap search result: {0}'.format(ldap_result))
+        logger.debug('Ldap search result: {0}'.format(ldap_result))
         entitlements=[]
         if ldap_result:
             dict=ldap_result[0][0][1]
@@ -458,7 +468,7 @@ class User(db.Model):
                     entitlements.append(entitlement.decode("utf-8"))
             else:
                 e="Not found value in the autoprovisioning attribute field "
-                current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+                logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
         return entitlements
 
     def updateUser(self, Entitlements):
@@ -528,17 +538,17 @@ def getCorrectEntitlements(Entitlements):
             prefix=[x.lower() for x in prefix]
             if (prefix!=urnArgs):
                 e= "Typo in first part of urn value"
-                current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+                logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
                 continue
 
         else:
-            e="Entry not a PowerDNS-Admin record"
-            current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+            e="Entry not a PowerDNS-AdminNG record"
+            logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
             continue
 
         if len(arguments)<=len(urnArgs)+1: #prefix:powerdns-admin
             e="No value given after the prefix"
-            current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+            logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
             continue
 
         entArgs=arguments[arguments.index('powerdns-admin')+1:]
@@ -547,14 +557,14 @@ def getCorrectEntitlements(Entitlements):
         role_names=get_role_names(roles)
 
         if role not in role_names:
-            e="Role given by entry not a role availabe in PowerDNS-Admin. Check for spelling errors"
-            current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+            e="Role given by entry not a role available in PowerDNS-AdminNG. Check for spelling errors"
+            logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
             continue
 
         if len(entArgs)>1:
             if (role!="User"):
                 e="Too many arguments for Admin or Operator"
-                current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+                logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
                 continue
             else:
                 if len(entArgs)<=3:
@@ -565,7 +575,7 @@ def getCorrectEntitlements(Entitlements):
                             continue
                 else:
                     e="Too many arguments"
-                    current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+                    logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
                     continue
 
         entitlements.append(Entitlement)
@@ -580,7 +590,7 @@ def checkIfDomainExists(domainName):
     ).scalars().all()
     if len(result)==0:
         e= domainName + " is not found in the database"
-        current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+        logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
         return False
     return True
 
@@ -591,7 +601,7 @@ def checkIfAccountExists(accountName):
     ).scalars().all()
     if len(result)==0:
         e= accountName + " is not found in the database"
-        current_app.logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
+        logger.warning("Cannot apply autoprovisioning on user: {}".format(e))
         return False
     return True
 

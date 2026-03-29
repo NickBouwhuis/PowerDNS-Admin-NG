@@ -1,13 +1,15 @@
+import logging
 import traceback
-
-from flask import current_app
 from datetime import datetime
 from sqlalchemy import delete
 
 from .base import db
 
+logger = logging.getLogger(__name__)
+
 
 class History(db.Model):
+    __tablename__ = 'history'
     id = db.Column(db.Integer, primary_key=True)
     # format of msg field must not change. History traversing is done using part of the msg field
     msg = db.Column(db.String(256))
@@ -48,10 +50,10 @@ class History(db.Model):
         try:
             db.session.execute(delete(History))
             db.session.commit()
-            current_app.logger.info("Removed all history")
+            logger.info("Removed all history")
             return True
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error("Cannot remove history. DETAIL: {0}".format(e))
-            current_app.logger.debug(traceback.format_exc())
+            logger.error("Cannot remove history. DETAIL: {0}".format(e))
+            logger.debug(traceback.format_exc())
             return False

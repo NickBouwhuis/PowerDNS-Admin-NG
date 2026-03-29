@@ -10,7 +10,6 @@ import traceback
 import urllib.parse
 
 import requests
-from flask import current_app, request as flask_request
 from urllib.parse import urljoin
 
 from ..models.setting import Setting
@@ -59,7 +58,10 @@ class PowerDNSClient:
 
     def _url(self, path):
         """Build full URL for a PowerDNS API endpoint path."""
-        return urljoin(self.api_url, self.api_extended_url + path)
+        base = self.api_url
+        if base and '://' not in base:
+            base = 'http://' + base
+        return urljoin(base, self.api_extended_url + path)
 
     def _request(self, method, path, data=None):
         """
@@ -396,10 +398,15 @@ class PowerDNSClient:
 
     # ── Pass-through Proxy ───────────────────────────────────────────────
 
-    def forward_request(self):
+    def forward_request(self, method, full_path, json_body=None):
         """
-        Forward the current Flask request to the PowerDNS API.
+        Forward a request to the PowerDNS API.
         Used for API pass-through endpoints.
+
+        Args:
+            method: HTTP method (GET, POST, PUT, PATCH, DELETE)
+            full_path: Full URL path including query string
+            json_body: Optional parsed JSON body (for POST/PUT/PATCH)
 
         Returns:
             requests.Response: Raw response from PowerDNS
@@ -407,14 +414,14 @@ class PowerDNSClient:
         headers = self._headers()
         data = None
 
-        if flask_request.method not in ('GET', 'DELETE'):
-            data = flask_request.get_json(force=True, silent=True)
+        if method not in ('GET', 'DELETE') and json_body is not None:
+            data = json_body
             logger.debug("Forwarding request to PowerDNS API: %s", data)
 
-        url = urljoin(self.api_url, flask_request.full_path)
+        url = urljoin(self.api_url, full_path)
 
         return requests.request(
-            flask_request.method,
+            method,
             url,
             headers=headers,
             verify=bool(self.verify_ssl),

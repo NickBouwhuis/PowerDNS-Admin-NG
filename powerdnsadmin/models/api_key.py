@@ -1,13 +1,16 @@
+import logging
 import secrets
 import string
+
 import bcrypt
-from flask import current_app
 from sqlalchemy import select
 
 from .base import db
 from ..models.role import Role
 from ..models.domain import Domain
 from ..models.account import Account
+
+logger = logging.getLogger(__name__)
 
 class ApiKey(db.Model):
     __tablename__ = "apikey"
@@ -35,7 +38,7 @@ class ApiKey(db.Model):
                 for _ in range(15))
             self.plain_key = rand_key
             self.key = self.get_hashed_password(rand_key).decode('utf-8')
-            current_app.logger.debug("Hashed key: {0}".format(self.key))
+            logger.debug("Hashed key: {0}".format(self.key))
         else:
             self.key = key
 
@@ -47,7 +50,7 @@ class ApiKey(db.Model):
             db.session.add(self)
             db.session.commit()
         except Exception as e:
-            current_app.logger.error('Can not update api key table. Error: {0}'.format(e))
+            logger.error('Can not update api key table. Error: {0}'.format(e))
             db.session.rollback()
             raise e
 
@@ -57,7 +60,7 @@ class ApiKey(db.Model):
             db.session.commit()
         except Exception as e:
             msg_str = 'Can not delete api key template. Error: {0}'
-            current_app.logger.error(msg_str.format(e))
+            logger.error(msg_str.format(e))
             db.session.rollback()
             raise e
 
@@ -87,7 +90,7 @@ class ApiKey(db.Model):
           db.session.commit()
         except Exception as e:
           msg_str = 'Update of apikey failed. Error: {0}'
-          current_app.logger.error(msg_str.format(e))
+          logger.error(msg_str.format(e))
           db.session.rollback()  # fixed line
           raise e
 
@@ -111,8 +114,9 @@ class ApiKey(db.Model):
         # cryptographically secure fashion, as this then makes
         # expendable as an exception the otherwise vital protection of
         # proper salting as provided by bcrypt.gensalt().
+        from powerdnsadmin.core.config import get_config
         return bcrypt.hashpw(pw.encode('utf-8'),
-                             current_app.config.get('SALT').encode('utf-8'))
+                             get_config()['SALT'].encode('utf-8'))
 
     def check_password(self, hashed_password):
         # Check hashed password. Using bcrypt,

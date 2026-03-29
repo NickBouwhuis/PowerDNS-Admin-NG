@@ -3,11 +3,14 @@ Local password authentication service.
 
 Handles bcrypt password hashing and local user credential validation.
 """
+import logging
+
 import bcrypt
-from flask import current_app
 from sqlalchemy import select
 
 from ...models.base import db
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(plain_text_password):
@@ -36,10 +39,11 @@ def check_password(plain_text_password, hashed_password):
     """
     if plain_text_password is None or hashed_password is None:
         return False
-    return bcrypt.checkpw(
-        plain_text_password.encode('utf-8'),
-        hashed_password.encode('utf-8'),
-    )
+    if isinstance(plain_text_password, str):
+        plain_text_password = plain_text_password.encode('utf-8')
+    if isinstance(hashed_password, str):
+        hashed_password = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(plain_text_password, hashed_password)
 
 
 class LocalAuthService:
@@ -69,16 +73,16 @@ class LocalAuthService:
                 user_info.password
                 and check_password(plain_text_password, user_info.password)
             ):
-                current_app.logger.info(
+                logger.info(
                     'User "{0}" logged in successfully. '
                     'Authentication request from {1}'.format(username, src_ip))
                 return True
-            current_app.logger.error(
+            logger.error(
                 'User "{0}" inputted a wrong password. '
                 'Authentication request from {1}'.format(username, src_ip))
             return False
 
-        current_app.logger.warning(
+        logger.warning(
             'User "{0}" does not exist. '
             'Authentication request from {1}'.format(username, src_ip))
         return False

@@ -10,7 +10,6 @@ Because the route handlers use deferred (local) imports such as
 """
 import json
 import pytest
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from fastapi import Depends, FastAPI, Request
@@ -75,17 +74,6 @@ def _make_mock_domain(domain_id, name):
     return domain
 
 
-def _make_flask_app():
-    """Create a mock Flask app with a no-op app_context."""
-    flask_app = MagicMock()
-
-    @contextmanager
-    def fake_app_context():
-        yield None
-
-    flask_app.app_context = fake_app_context
-    return flask_app
-
 
 def _setting_get_side_effect(key):
     """Default Setting().get() side effect returning common config values."""
@@ -126,10 +114,7 @@ def app_and_client():
     Returns a tuple of (fastapi_app, client) so tests can set
     dependency_overrides on the app.
     """
-    flask_app = _make_flask_app()
-
     fastapi_app = FastAPI(dependencies=[Depends(_cache_request_body)])
-    fastapi_app.state.flask_app = flask_app
     fastapi_app.include_router(api_v1_router)
 
     client = TestClient(fastapi_app, raise_server_exceptions=False)
