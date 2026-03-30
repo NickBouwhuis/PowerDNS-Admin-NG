@@ -145,10 +145,10 @@ def _user_can_remove_domain(user):
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
     request: Request,
-    tab: str = Query("forward", regex="^(forward|reverse_ipv4|reverse_ipv6)$"),
+    tab: str = Query("forward", pattern="^(forward|reverse_ipv4|reverse_ipv6)$"),
     search: str = Query("", description="Search filter for zone name / account"),
     sort_by: str = Query("name", description="Column to sort by"),
-    sort_dir: str = Query("asc", regex="^(asc|desc)$"),
+    sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     per_page: int = Query(25, ge=1, le=500),
 ):
