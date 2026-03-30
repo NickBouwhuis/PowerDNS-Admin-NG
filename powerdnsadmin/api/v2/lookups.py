@@ -51,7 +51,7 @@ def _get_authenticated_user(request: Request):
 
 
 @router.get("/accounts", response_model=list[AccountItem])
-async def list_accounts(request: Request):
+def list_accounts(request: Request):
     """List accounts accessible to the current user.
 
     Admins/Operators see all accounts. Users see only their accounts.
@@ -72,7 +72,7 @@ async def list_accounts(request: Request):
 
 
 @router.get("/templates", response_model=list[TemplateItem])
-async def list_templates(request: Request):
+def list_templates(request: Request):
     """List all domain templates."""
     from powerdnsadmin.models.domain_template import DomainTemplate
 

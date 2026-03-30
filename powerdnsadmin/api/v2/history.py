@@ -29,7 +29,7 @@ def _get_authenticated_user(request: Request):
 
 
 @router.get("")
-async def list_history(
+def list_history(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
@@ -125,7 +125,7 @@ async def list_history(
 
 
 @router.delete("")
-async def clear_history(request: Request):
+def clear_history(request: Request):
     """Clear all history (admin only)."""
     from powerdnsadmin.models.history import History
     from powerdnsadmin.models.setting import Setting

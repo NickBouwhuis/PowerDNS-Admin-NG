@@ -143,7 +143,7 @@ def _user_can_remove_domain(user):
 # ---------------------------------------------------------------------------
 
 @router.get("", response_model=ZoneListResponse)
-async def list_zones(
+def list_zones(
     request: Request,
     tab: str = Query("forward", pattern="^(forward|reverse_ipv4|reverse_ipv6)$"),
     search: str = Query("", description="Search filter for zone name / account"),
@@ -245,7 +245,7 @@ async def list_zones(
 
 
 @router.post("", response_model=ZoneCreateResponse, status_code=201)
-async def create_zone(request: Request, body: ZoneCreateRequest):
+def create_zone(request: Request, body: ZoneCreateRequest):
     """Create a new DNS zone."""
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.domain import Domain
@@ -389,7 +389,7 @@ async def create_zone(request: Request, body: ZoneCreateRequest):
 
 
 @router.post("/sync")
-async def sync_zones(request: Request):
+def sync_zones(request: Request):
     """Trigger zone sync from PowerDNS to local database.
 
     Admin/Operator only.
@@ -431,7 +431,7 @@ def _require_zone_access(user, zone_name: str):
 
 
 @router.get("/detail/{zone_name}")
-async def get_zone_detail(zone_name: str, request: Request):
+def get_zone_detail(zone_name: str, request: Request):
     """Get zone detail including records from PowerDNS."""
     from powerdnsadmin.models.record import Record
     from powerdnsadmin.models.setting import Setting
@@ -484,7 +484,7 @@ async def get_zone_detail(zone_name: str, request: Request):
 
 
 @router.patch("/detail/{zone_name}/records")
-async def apply_records(zone_name: str, request: Request):
+def apply_records(zone_name: str, request: Request):
     """Apply record changes to a zone.
 
     Expects JSON body with a list of all records (the full desired state).
@@ -498,7 +498,7 @@ async def apply_records(zone_name: str, request: Request):
     user = _get_authenticated_user(request)
     domain = _require_zone_access(user, zone_name)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     submitted_records = body.get("records", [])
 
     r = Record()
@@ -528,7 +528,7 @@ async def apply_records(zone_name: str, request: Request):
 
 
 @router.post("/detail/{zone_name}/notify")
-async def notify_zone(zone_name: str, request: Request):
+def notify_zone(zone_name: str, request: Request):
     """Send DNS NOTIFY to slave servers."""
     from powerdnsadmin.services.pdns_client import PowerDNSClient
 
@@ -545,7 +545,7 @@ async def notify_zone(zone_name: str, request: Request):
 
 
 @router.post("/detail/{zone_name}/axfr")
-async def axfr_zone(zone_name: str, request: Request):
+def axfr_zone(zone_name: str, request: Request):
     """Trigger AXFR for a slave zone."""
     from powerdnsadmin.models.domain import Domain
 
@@ -560,7 +560,7 @@ async def axfr_zone(zone_name: str, request: Request):
 
 
 @router.get("/detail/{zone_name}/changelog")
-async def get_changelog(
+def get_changelog(
     zone_name: str,
     request: Request,
     page: int = Query(1, ge=1),
@@ -605,7 +605,7 @@ async def get_changelog(
 
 
 @router.get("/detail/{zone_name}/dnssec")
-async def get_dnssec(zone_name: str, request: Request):
+def get_dnssec(zone_name: str, request: Request):
     """Get DNSSEC keys for a zone."""
     from powerdnsadmin.models.domain import Domain
 
@@ -621,7 +621,7 @@ async def get_dnssec(zone_name: str, request: Request):
 
 
 @router.post("/detail/{zone_name}/dnssec/enable")
-async def enable_dnssec(zone_name: str, request: Request):
+def enable_dnssec(zone_name: str, request: Request):
     """Enable DNSSEC for a zone."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.history import History
@@ -655,7 +655,7 @@ async def enable_dnssec(zone_name: str, request: Request):
 
 
 @router.delete("/detail/{zone_name}/dnssec")
-async def disable_dnssec(zone_name: str, request: Request):
+def disable_dnssec(zone_name: str, request: Request):
     """Disable DNSSEC for a zone (delete all keys)."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.history import History
@@ -687,7 +687,7 @@ async def disable_dnssec(zone_name: str, request: Request):
 
 
 @router.get("/detail/{zone_name}/settings")
-async def get_zone_settings(zone_name: str, request: Request):
+def get_zone_settings(zone_name: str, request: Request):
     """Get zone settings (type, SOA, account, user access)."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.user import User
@@ -725,7 +725,7 @@ async def get_zone_settings(zone_name: str, request: Request):
 
 
 @router.put("/detail/{zone_name}/settings")
-async def update_zone_settings(zone_name: str, request: Request):
+def update_zone_settings(zone_name: str, request: Request):
     """Update zone settings."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.user import User
@@ -736,7 +736,7 @@ async def update_zone_settings(zone_name: str, request: Request):
     domain = _require_zone_access(user, zone_name)
     _require_admin_or_operator(user)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     d = Domain()
     results = []
 
@@ -803,7 +803,7 @@ async def update_zone_settings(zone_name: str, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.delete("/{zone_name}")
-async def delete_zone(zone_name: str, request: Request):
+def delete_zone(zone_name: str, request: Request):
     """Delete a DNS zone."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.history import History

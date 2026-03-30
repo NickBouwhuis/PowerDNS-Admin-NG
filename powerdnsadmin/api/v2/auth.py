@@ -126,7 +126,7 @@ def _signin_history(request: Request, username: str, authenticator: str, success
 # ---------------------------------------------------------------------------
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: Request, body: LoginRequest):
+def login(request: Request, body: LoginRequest):
     """Authenticate user with username/password, optionally with OTP.
 
     Returns user info on success. If OTP is required but not provided,
@@ -225,7 +225,7 @@ async def login(request: Request, body: LoginRequest):
 
 
 @router.post("/logout")
-async def logout(request: Request):
+def logout(request: Request):
     """Clear the session, logging the user out."""
     session = _get_session(request)
     session.clear()
@@ -233,7 +233,7 @@ async def logout(request: Request):
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(request: Request):
+def me(request: Request):
     """Return current user info from the session.
 
     Returns 401 if not authenticated.
@@ -255,7 +255,7 @@ async def me(request: Request):
 
 
 @router.get("/settings", response_model=AuthSettingsResponse)
-async def auth_settings(request: Request):
+def auth_settings(request: Request):
     """Return public auth settings so the login page knows which providers to show.
 
     This endpoint does NOT require authentication.
@@ -290,7 +290,7 @@ class ProfileUpdateRequest(BaseModel):
 
 
 @router.get("/profile")
-async def get_profile(request: Request):
+def get_profile(request: Request):
     """Get current user's profile info."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
@@ -319,7 +319,7 @@ async def get_profile(request: Request):
 
 
 @router.put("/profile")
-async def update_profile(request: Request, body: ProfileUpdateRequest):
+def update_profile(request: Request, body: ProfileUpdateRequest):
     """Update current user's profile. Only available for LOCAL auth users."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
@@ -358,7 +358,7 @@ async def update_profile(request: Request, body: ProfileUpdateRequest):
 
 
 @router.post("/profile/otp")
-async def toggle_otp(request: Request):
+def toggle_otp(request: Request):
     """Enable or disable OTP for the current user."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
@@ -372,7 +372,7 @@ async def toggle_otp(request: Request):
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     enable = body.get("enable", False)
 
     user.update_profile(enable_otp=enable)

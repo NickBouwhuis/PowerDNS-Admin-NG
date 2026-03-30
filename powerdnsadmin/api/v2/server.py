@@ -32,7 +32,7 @@ def _require_admin_or_operator(user):
 
 
 @router.get("/statistics")
-async def get_statistics(request: Request):
+def get_statistics(request: Request):
     """Get PowerDNS server statistics."""
     from powerdnsadmin.models.server import Server
     from powerdnsadmin.models.domain import Domain
@@ -77,7 +77,7 @@ async def get_statistics(request: Request):
 
 
 @router.get("/configuration")
-async def get_configuration(request: Request):
+def get_configuration(request: Request):
     """Get PowerDNS server configuration."""
     from powerdnsadmin.models.server import Server
 

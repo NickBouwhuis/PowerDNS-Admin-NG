@@ -27,7 +27,7 @@ def _get_authenticated_user(request: Request):
 
 
 @router.get("/search")
-async def global_search(
+def global_search(
     request: Request,
     q: str = Query(..., min_length=1, description="Search query"),
 ):

@@ -4,6 +4,7 @@ API v2 settings endpoints — session-based settings management for the SPA.
 Provides grouped settings for Basic, PDNS, Records, and Authentication.
 All endpoints require Administrator or Operator role via session auth.
 """
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -189,7 +190,7 @@ def _get_settings_dict(setting_obj, keys):
 # ===================================================================
 
 @router.get("/basic")
-async def get_basic_settings(request: Request):
+def get_basic_settings(request: Request):
     """Get all basic settings."""
     from powerdnsadmin.models.setting import Setting
 
@@ -201,14 +202,14 @@ async def get_basic_settings(request: Request):
 
 
 @router.put("/basic")
-async def update_basic_settings(request: Request):
+def update_basic_settings(request: Request):
     """Update one or more basic settings. Body: {key: value, ...}"""
     from powerdnsadmin.models.setting import Setting
 
     user = _get_authenticated_user(request)
     _require_admin_or_operator(user)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     s = Setting()
     updated = []
 
@@ -226,7 +227,7 @@ async def update_basic_settings(request: Request):
 
 
 @router.put("/basic/{key}/toggle")
-async def toggle_basic_setting(key: str, request: Request):
+def toggle_basic_setting(key: str, request: Request):
     """Toggle a boolean setting."""
     from powerdnsadmin.models.setting import Setting
 
@@ -252,7 +253,7 @@ async def toggle_basic_setting(key: str, request: Request):
 # ===================================================================
 
 @router.get("/pdns")
-async def get_pdns_settings(request: Request):
+def get_pdns_settings(request: Request):
     """Get PowerDNS connection settings."""
     from powerdnsadmin.models.setting import Setting
 
@@ -264,14 +265,14 @@ async def get_pdns_settings(request: Request):
 
 
 @router.put("/pdns")
-async def update_pdns_settings(request: Request):
+def update_pdns_settings(request: Request):
     """Update PowerDNS connection settings."""
     from powerdnsadmin.models.setting import Setting
 
     user = _get_authenticated_user(request)
     _require_admin_or_operator(user)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     s = Setting()
 
     for key in PDNS_SETTING_KEYS:
@@ -292,7 +293,7 @@ async def update_pdns_settings(request: Request):
 
 
 @router.post("/pdns/test")
-async def test_pdns_connection(request: Request):
+def test_pdns_connection(request: Request):
     """Test the PowerDNS API connection."""
     from powerdnsadmin.services.pdns_client import PowerDNSClient
 
@@ -320,7 +321,7 @@ async def test_pdns_connection(request: Request):
 # ===================================================================
 
 @router.get("/records")
-async def get_record_settings(request: Request):
+def get_record_settings(request: Request):
     """Get allowed record types for forward and reverse zones."""
     from powerdnsadmin.models.setting import Setting
 
@@ -333,13 +334,13 @@ async def get_record_settings(request: Request):
 
     # Ensure they're dicts
     if isinstance(forward, str):
-        import json
+
         try:
             forward = json.loads(forward)
         except (json.JSONDecodeError, TypeError):
             forward = {}
     if isinstance(reverse, str):
-        import json
+
         try:
             reverse = json.loads(reverse)
         except (json.JSONDecodeError, TypeError):
@@ -352,14 +353,14 @@ async def get_record_settings(request: Request):
 
 
 @router.put("/records")
-async def update_record_settings(request: Request):
+def update_record_settings(request: Request):
     """Update allowed record types for forward and reverse zones."""
     from powerdnsadmin.models.setting import Setting
 
     user = _get_authenticated_user(request)
     _require_admin_or_operator(user)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     s = Setting()
 
     if "forward" in body:
@@ -375,7 +376,7 @@ async def update_record_settings(request: Request):
 # ===================================================================
 
 @router.get("/authentication")
-async def get_auth_settings(request: Request):
+def get_auth_settings(request: Request):
     """Get all authentication settings grouped by provider."""
     from powerdnsadmin.models.setting import Setting
 
@@ -397,14 +398,14 @@ async def get_auth_settings(request: Request):
 
 
 @router.put("/authentication")
-async def update_auth_settings(request: Request):
+def update_auth_settings(request: Request):
     """Update authentication settings. Body: {key: value, ...}"""
     from powerdnsadmin.models.setting import Setting
 
     user = _get_authenticated_user(request)
     _require_admin_or_operator(user)
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     s = Setting()
 
     # Flatten all valid auth keys

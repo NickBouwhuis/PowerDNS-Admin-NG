@@ -68,7 +68,7 @@ class UserUpdateRequest(BaseModel):
 
 
 @router.get("/users")
-async def list_users(request: Request):
+def list_users(request: Request):
     """List all users."""
     from powerdnsadmin.models.user import User
 
@@ -91,7 +91,7 @@ async def list_users(request: Request):
 
 
 @router.get("/users/{username}")
-async def get_user(username: str, request: Request):
+def get_user(username: str, request: Request):
     """Get user details by username."""
     from powerdnsadmin.models.user import User
 
@@ -120,7 +120,7 @@ async def get_user(username: str, request: Request):
 
 
 @router.post("/users", status_code=201)
-async def create_user(request: Request, body: UserCreateRequest):
+def create_user(request: Request, body: UserCreateRequest):
     """Create a new user."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.role import Role
@@ -153,7 +153,7 @@ async def create_user(request: Request, body: UserCreateRequest):
 
 
 @router.put("/users/{user_id}")
-async def update_user(user_id: int, request: Request, body: UserUpdateRequest):
+def update_user(user_id: int, request: Request, body: UserUpdateRequest):
     """Update user details."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.role import Role
@@ -192,7 +192,7 @@ async def update_user(user_id: int, request: Request, body: UserUpdateRequest):
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int, request: Request):
+def delete_user(user_id: int, request: Request):
     """Delete a user."""
     from powerdnsadmin.models.user import User
     from powerdnsadmin.models.base import db
@@ -232,7 +232,7 @@ class AccountUpdateRequest(BaseModel):
 
 
 @router.get("/accounts")
-async def list_accounts(request: Request):
+def list_accounts(request: Request):
     """List all accounts."""
     from powerdnsadmin.models.account import Account
 
@@ -255,7 +255,7 @@ async def list_accounts(request: Request):
 
 
 @router.get("/accounts/{account_id}")
-async def get_account(account_id: int, request: Request):
+def get_account(account_id: int, request: Request):
     """Get account details."""
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.user import User
@@ -288,7 +288,7 @@ async def get_account(account_id: int, request: Request):
 
 
 @router.post("/accounts", status_code=201)
-async def create_account(request: Request, body: AccountCreateRequest):
+def create_account(request: Request, body: AccountCreateRequest):
     """Create a new account."""
     from powerdnsadmin.models.account import Account
 
@@ -313,7 +313,7 @@ async def create_account(request: Request, body: AccountCreateRequest):
 
 
 @router.put("/accounts/{account_id}")
-async def update_account(account_id: int, request: Request, body: AccountUpdateRequest):
+def update_account(account_id: int, request: Request, body: AccountUpdateRequest):
     """Update account details."""
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.base import db
@@ -340,7 +340,7 @@ async def update_account(account_id: int, request: Request, body: AccountUpdateR
 
 
 @router.delete("/accounts/{account_id}")
-async def delete_account(account_id: int, request: Request):
+def delete_account(account_id: int, request: Request):
     """Delete an account."""
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.base import db
@@ -360,7 +360,7 @@ async def delete_account(account_id: int, request: Request):
 
 
 @router.put("/accounts/{account_id}/members")
-async def update_account_members(account_id: int, request: Request):
+def update_account_members(account_id: int, request: Request):
     """Update account member list."""
     from powerdnsadmin.models.account import Account
     from powerdnsadmin.models.base import db
@@ -372,7 +372,7 @@ async def update_account_members(account_id: int, request: Request):
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
     user_ids = body.get("user_ids", [])
 
     account.grant_privileges(user_ids)
@@ -399,7 +399,7 @@ class ApiKeyUpdateRequest(BaseModel):
 
 
 @router.get("/apikeys")
-async def list_apikeys(request: Request):
+def list_apikeys(request: Request):
     """List all API keys."""
     from powerdnsadmin.models.api_key import ApiKey
 
@@ -420,7 +420,7 @@ async def list_apikeys(request: Request):
 
 
 @router.get("/apikeys/{key_id}")
-async def get_apikey(key_id: int, request: Request):
+def get_apikey(key_id: int, request: Request):
     """Get API key details."""
     from powerdnsadmin.models.api_key import ApiKey
     from powerdnsadmin.models.base import db
@@ -442,7 +442,7 @@ async def get_apikey(key_id: int, request: Request):
 
 
 @router.post("/apikeys", status_code=201)
-async def create_apikey(request: Request, body: ApiKeyCreateRequest):
+def create_apikey(request: Request, body: ApiKeyCreateRequest):
     """Create a new API key. Returns the plain key (shown once only)."""
     from powerdnsadmin.models.api_key import ApiKey
     from powerdnsadmin.models.domain import Domain
@@ -487,7 +487,7 @@ async def create_apikey(request: Request, body: ApiKeyCreateRequest):
 
 
 @router.put("/apikeys/{key_id}")
-async def update_apikey(key_id: int, request: Request, body: ApiKeyUpdateRequest):
+def update_apikey(key_id: int, request: Request, body: ApiKeyUpdateRequest):
     """Update an API key."""
     from powerdnsadmin.models.api_key import ApiKey
     from powerdnsadmin.models.domain import Domain
@@ -533,7 +533,7 @@ async def update_apikey(key_id: int, request: Request, body: ApiKeyUpdateRequest
 
 
 @router.delete("/apikeys/{key_id}")
-async def delete_apikey(key_id: int, request: Request):
+def delete_apikey(key_id: int, request: Request):
     """Delete an API key."""
     from powerdnsadmin.models.api_key import ApiKey
     from powerdnsadmin.models.base import db
@@ -578,7 +578,7 @@ class TemplateFromZoneRequest(BaseModel):
 
 
 @router.get("/templates")
-async def list_templates(request: Request):
+def list_templates(request: Request):
     """List all domain templates."""
     from powerdnsadmin.models.domain_template import DomainTemplate
 
@@ -598,7 +598,7 @@ async def list_templates(request: Request):
 
 
 @router.get("/templates/{template_id}")
-async def get_template(template_id: int, request: Request):
+def get_template(template_id: int, request: Request):
     """Get template with its records."""
     from powerdnsadmin.models.domain_template import DomainTemplate
     from powerdnsadmin.models.base import db
@@ -630,7 +630,7 @@ async def get_template(template_id: int, request: Request):
 
 
 @router.post("/templates", status_code=201)
-async def create_template(request: Request, body: TemplateCreateRequest):
+def create_template(request: Request, body: TemplateCreateRequest):
     """Create a new domain template."""
     from powerdnsadmin.models.domain_template import DomainTemplate
 
@@ -653,7 +653,7 @@ async def create_template(request: Request, body: TemplateCreateRequest):
 
 
 @router.put("/templates/{template_id}")
-async def update_template(template_id: int, request: Request):
+def update_template(template_id: int, request: Request):
     """Update template metadata and/or records."""
     from powerdnsadmin.models.domain_template import DomainTemplate
     from powerdnsadmin.models.domain_template_record import DomainTemplateRecord
@@ -666,7 +666,7 @@ async def update_template(template_id: int, request: Request):
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    body = await request.json()
+    body = json.loads(request._body) if hasattr(request, "_body") and request._body else {}
 
     # Update metadata
     if "description" in body:
@@ -701,7 +701,7 @@ async def update_template(template_id: int, request: Request):
 
 
 @router.delete("/templates/{template_id}")
-async def delete_template(template_id: int, request: Request):
+def delete_template(template_id: int, request: Request):
     """Delete a domain template."""
     from powerdnsadmin.models.domain_template import DomainTemplate
     from powerdnsadmin.models.base import db
@@ -721,7 +721,7 @@ async def delete_template(template_id: int, request: Request):
 
 
 @router.post("/templates/from-zone", status_code=201)
-async def create_template_from_zone(request: Request, body: TemplateFromZoneRequest):
+def create_template_from_zone(request: Request, body: TemplateFromZoneRequest):
     """Create a template from an existing zone's records."""
     from powerdnsadmin.models.domain import Domain
     from powerdnsadmin.models.domain_template import DomainTemplate
