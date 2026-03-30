@@ -12,6 +12,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin", tags=["admin-v2"])
 
 
@@ -25,12 +27,15 @@ def _get_authenticated_user(request: Request):
 
     session = getattr(request.state, "session", None)
     if session is None:
+        logger.error("v2 auth: session middleware not configured")
         raise HTTPException(status_code=500, detail="Session middleware not configured")
     user_id = session.get("user_id")
     if not user_id:
+        logger.warning("v2 auth: no user_id in session (keys: %s)", list(session.keys()))
         raise HTTPException(status_code=401, detail="Not authenticated")
     user = db.session.get(User, int(user_id))
     if user is None:
+        logger.warning("v2 auth: user_id=%s not found in DB", user_id)
         raise HTTPException(status_code=401, detail="User not found")
     return user
 
